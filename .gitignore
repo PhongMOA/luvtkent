@@ -1,0 +1,8 @@
+node_modules/
+downloads/
+android/
+.claude/
+.gemini/
+.env
+.DS_Store
+*.log

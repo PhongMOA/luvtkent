@@ -1,0 +1,14 @@
+{
+  "appId": "com.luvtk.entertainment",
+  "appName": "LuvTK Entertainment",
+  "webDir": "public",
+  "server": {
+    "androidScheme": "https",
+    "allowNavigation": ["*"]
+  },
+  "android": {
+    "allowMixedContent": true,
+    "captureInput": true,
+    "webContentsDebuggingEnabled": true
+  }
+}

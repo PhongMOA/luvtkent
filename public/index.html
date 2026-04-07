@@ -1,0 +1,708 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>LuvTK Entertainment</title>
+  <meta name="description" content="Comic Crawler & Movie Manager - Công cụ crawl truyện tranh và quản lý phim cá nhân">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/icon?family=Material+Icons+Round" rel="stylesheet">
+  <link rel="stylesheet" href="/css/index.css">
+</head>
+<body>
+  <div id="app">
+    <!-- Navigation Bar -->
+    <nav class="navbar" id="navbar">
+      <div class="nav-brand">
+        <span class="brand-icon material-icons-round">auto_awesome</span>
+        <span class="brand-text">LuvTK<span class="brand-highlight">Ent</span></span>
+      </div>
+      <div class="nav-tabs">
+        <button class="nav-tab active" data-page="crawler" id="tab-crawler">
+          <span class="material-icons-round">travel_explore</span>
+          <span class="tab-text">Crawler</span>
+        </button>
+        <button class="nav-tab" data-page="library" id="tab-library">
+          <span class="material-icons-round">collections_bookmark</span>
+          <span class="tab-text">Thư viện</span>
+        </button>
+        <button class="nav-tab" data-page="movies" id="tab-movies">
+          <span class="material-icons-round">movie</span>
+          <span class="tab-text">Phim</span>
+        </button>
+        <button class="nav-tab" data-page="music" id="tab-music">
+          <span class="material-icons-round">music_note</span>
+          <span class="tab-text">Tập đàn</span>
+        </button>
+        <button class="nav-tab" data-page="settings" id="tab-settings">
+          <span class="material-icons-round">settings</span>
+          <span class="tab-text">Cài đặt</span>
+        </button>
+      </div>
+    </nav>
+
+    <!-- Pages Container -->
+    <main class="pages-container">
+
+      <!-- ======================== -->
+      <!-- COMIC CRAWLER PAGE -->
+      <!-- ======================== -->
+      <section class="page active" id="page-crawler">
+        <div class="page-header">
+          <h1 class="page-title">
+            <span class="material-icons-round">travel_explore</span>
+            Comic Crawler
+          </h1>
+          <p class="page-subtitle">Crawl truyện tranh từ TopTruyen</p>
+        </div>
+
+        <!-- URL Input -->
+        <div class="card glass-card" id="crawl-input-card">
+          <div class="input-group">
+            <span class="input-icon material-icons-round">link</span>
+            <input type="url" id="comic-url" placeholder="Nhập link bộ truyện (VD: https://www.toptruyenssi.com/truyen-tranh/...)" autocomplete="off">
+            <button class="btn btn-primary" id="btn-scan" title="Quét truyện">
+              <span class="material-icons-round">search</span>
+              <span>Quét</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Comic Info Card (shown after scan) -->
+        <div class="card glass-card hidden" id="comic-info-card">
+          <div class="comic-info">
+            <div class="comic-cover-wrapper">
+              <img id="comic-cover" src="" alt="Cover">
+            </div>
+            <div class="comic-details">
+              <h2 id="comic-title" class="comic-title"></h2>
+              <p id="comic-alt-name" class="comic-alt-name"></p>
+              <div class="comic-meta">
+                <span class="badge badge-primary" id="comic-status"></span>
+                <span class="badge badge-secondary" id="comic-chapter-count"></span>
+              </div>
+              <div id="comic-genres" class="comic-genres"></div>
+              
+              <div class="comic-edit-group" style="margin-top: 15px; display: flex; flex-direction: column; gap: 10px;">
+                <div class="input-form-group">
+                  <label style="font-size: 0.85rem; opacity: 0.8; margin-bottom: 4px; display: block;">Link tổng (Source URL):</label>
+                  <input type="text" id="comic-source-url" class="form-input" style="width: 100%; background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.1); color: white; padding: 8px; border-radius: 6px;">
+                </div>
+                <div class="input-form-group">
+                  <label style="font-size: 0.85rem; opacity: 0.8; margin-bottom: 4px; display: block;">Tóm tắt nội dung:</label>
+                  <textarea id="comic-desc-input" class="form-input" rows="3" style="width: 100%; background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.1); color: white; padding: 8px; border-radius: 6px; resize: vertical;"></textarea>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Crawl Options -->
+          <div class="crawl-options">
+            <div class="option-group">
+              <label class="option-label">Chế độ crawl:</label>
+              <div class="radio-group">
+                <label class="radio-option">
+                  <input type="radio" name="crawl-mode" value="links" checked>
+                  <span class="radio-custom"></span>
+                  <span class="radio-text">
+                    <span class="material-icons-round">link</span>
+                    Lấy link ảnh
+                  </span>
+                </label>
+                <label class="radio-option">
+                  <input type="radio" name="crawl-mode" value="download">
+                  <span class="radio-custom"></span>
+                  <span class="radio-text">
+                    <span class="material-icons-round">download</span>
+                    Download ảnh
+                  </span>
+                </label>
+              </div>
+            </div>
+
+            <!-- Storage option for download mode -->
+            <div class="option-group hidden" id="storage-option">
+              <label class="option-label">Lưu về:</label>
+              <div class="radio-group">
+                <label class="radio-option">
+                  <input type="radio" name="storage" value="local" checked>
+                  <span class="radio-custom"></span>
+                  <span class="radio-text">
+                    <span class="material-icons-round">phone_android</span>
+                    Bộ nhớ máy
+                  </span>
+                </label>
+                <label class="radio-option">
+                  <input type="radio" name="storage" value="drive">
+                  <span class="radio-custom"></span>
+                  <span class="radio-text">
+                    <span class="material-icons-round">cloud_upload</span>
+                    Google Drive
+                  </span>
+                </label>
+              </div>
+            </div>
+
+            <div class="action-bar-top" style="display: flex; gap: 8px; margin-bottom: 12px; align-items: center; flex-wrap: wrap;">
+              <button class="btn btn-accent btn-sm" id="btn-select-all" style="padding: 6px 12px; font-size: 13px;">
+                <span class="material-icons-round" style="font-size: 18px;">select_all</span>
+                <span id="btn-select-all-text">Bỏ chọn tất cả</span>
+              </button>
+              
+              <span style="width: 1px; height: 18px; background: var(--border-color); margin: 0 4px;"></span>
+              
+              <input type="number" id="input-range-from" placeholder="Từ chap..." style="width: 100px; padding: 6px 12px; border-radius: 8px; border: 1px solid var(--border-color); background: var(--bg-secondary); color: var(--text-primary); font-family: inherit; font-size: 13px;">
+              <button class="btn btn-secondary btn-sm" id="btn-select-range" style="padding: 6px 12px; font-size: 13px;">
+                <span class="material-icons-round" style="font-size: 18px;">playlist_add_check</span>
+                Chọn tới mới nhất
+              </button>
+            </div>
+            
+            <div class="action-bar">
+              <button class="btn btn-primary btn-lg" id="btn-start-crawl" style="flex: 1; width: 100%;">
+                <span class="material-icons-round">rocket_launch</span>
+                Bắt đầu Crawl
+              </button>
+            </div>
+          </div>
+
+          <!-- Chapter List -->
+          <div class="chapter-list" id="chapter-list">
+            <!-- Chapters rendered here -->
+          </div>
+        </div>
+
+        <!-- Crawl Progress -->
+        <div class="card glass-card hidden" id="crawl-progress-card">
+          <h3 class="card-title">
+            <span class="material-icons-round spin">sync</span>
+            Đang crawl...
+          </h3>
+          <div class="progress-info">
+            <span id="progress-text">0/0</span>
+            <span id="progress-chapter"></span>
+          </div>
+          <div class="progress-bar-container">
+            <div class="progress-bar" id="progress-bar"></div>
+          </div>
+          <div id="progress-detail" class="progress-detail"></div>
+        </div>
+
+        <!-- Crawl Results -->
+        <div class="card glass-card hidden" id="crawl-results-card">
+          <h3 class="card-title">
+            <span class="material-icons-round">check_circle</span>
+            Kết quả Crawl
+          </h3>
+          <div class="results-summary" id="results-summary"></div>
+          <div class="results-actions">
+            <button class="btn btn-primary" id="btn-copy-links">
+              <span class="material-icons-round">content_copy</span>
+              Copy tất cả links
+            </button>
+            <button class="btn btn-secondary" id="btn-export-json">
+              <span class="material-icons-round">download</span>
+              Xuất JSON
+            </button>
+            <button class="btn btn-success" id="btn-read-all" style="display:none">
+              <span class="material-icons-round">auto_stories</span>
+              Đọc truyện
+            </button>
+          </div>
+          <div class="results-list" id="results-list">
+            <!-- Results rendered here -->
+          </div>
+        </div>
+
+        <!-- Crawl History -->
+        <div class="card glass-card" id="crawl-history-card">
+          <h3 class="card-title">
+            <span class="material-icons-round">history</span>
+            Lịch sử Crawl
+          </h3>
+          <div id="crawl-history" class="history-list">
+            <p class="empty-state">Chưa có lịch sử crawl nào</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- ======================== -->
+      <!-- COMIC LIBRARY PAGE -->
+      <!-- ======================== -->
+      <section class="page" id="page-library">
+        <div class="page-header">
+          <h1 class="page-title">
+            <span class="material-icons-round">collections_bookmark</span>
+            Thư viện Truyện
+          </h1>
+          <p class="page-subtitle">Tất cả truyện đã crawl</p>
+        </div>
+
+        <!-- Stats Bar -->
+        <div class="lib-stats">
+          <div class="lib-stat-item">
+            <span class="material-icons-round">menu_book</span>
+            <span class="lib-stat-value" id="lib-stat-comics">0</span>
+            <span class="lib-stat-label">truyện</span>
+          </div>
+          <div class="lib-stat-item">
+            <span class="material-icons-round">bookmark</span>
+            <span class="lib-stat-value" id="lib-stat-chapters">0</span>
+            <span class="lib-stat-label">chapters</span>
+          </div>
+          <div class="lib-stat-item">
+            <span class="material-icons-round">photo_library</span>
+            <span class="lib-stat-value" id="lib-stat-images">0</span>
+            <span class="lib-stat-label">ảnh</span>
+          </div>
+        </div>
+
+        <!-- Grid View -->
+        <div id="lib-grid-view">
+          <!-- Search -->
+          <div class="lib-search">
+            <span class="material-icons-round">search</span>
+            <input type="text" id="lib-search-input" placeholder="Tìm truyện theo tên hoặc thể loại...">
+          </div>
+
+          <!-- Comic Grid -->
+          <div class="lib-grid" id="lib-grid"></div>
+
+          <!-- Empty State -->
+          <div class="lib-empty hidden" id="lib-empty">
+            <span class="material-icons-round">library_books</span>
+            <p>Chưa có truyện nào trong thư viện</p>
+            <p class="lib-empty-hint">Crawl truyện ở tab Crawler rồi nhấn "Lưu vào thư viện"</p>
+          </div>
+
+          <!-- Pagination -->
+          <div class="lib-pagination" id="lib-pagination"></div>
+        </div>
+
+        <!-- Detail View -->
+        <div id="lib-detail-view" class="hidden">
+          <div class="lib-detail-toolbar" style="display: flex; justify-content: space-between; margin-bottom: 16px;">
+            <button class="btn btn-secondary" id="lib-back-btn">
+              <span class="material-icons-round">arrow_back</span>
+              Quay lại
+            </button>
+            <div style="display: flex; gap: 8px;">
+              <button class="btn btn-secondary" id="lib-star-detail-btn" title="Gắn sao">
+                <span class="material-icons-round">star_border</span>
+              </button>
+              <button class="btn btn-primary" id="lib-update-comic-btn">
+                <span class="material-icons-round">sync</span>
+                Cập nhật tập mới
+              </button>
+              <button class="btn btn-danger" id="lib-delete-detail-btn">
+                <span class="material-icons-round">delete</span>
+                Xóa
+              </button>
+            </div>
+          </div>
+
+          <div class="lib-detail-card card glass-card">
+            <div class="lib-detail-header">
+              <div class="lib-detail-cover" id="lib-detail-cover"></div>
+              <div class="lib-detail-info">
+                <h2 id="lib-detail-title"></h2>
+                <div class="comic-meta">
+                  <span class="badge badge-primary" id="lib-detail-status"></span>
+                  <span class="badge badge-secondary" id="lib-detail-chapters-count"></span>
+                </div>
+                <div id="lib-detail-genres" class="comic-genres"></div>
+                <p id="lib-detail-desc" class="comic-desc"></p>
+                <p id="lib-detail-date" class="lib-detail-date"></p>
+                <div class="lib-detail-reader-actions" style="margin-top: 16px; display: flex; gap: 10px; flex-wrap: wrap;">
+                  <button class="btn btn-primary" id="lib-detail-read-first">
+                    <span class="material-icons-round">skip_previous</span>
+                    Đọc từ đầu
+                  </button>
+                  <button class="btn btn-success" id="lib-detail-read-continue">
+                    <span class="material-icons-round">play_arrow</span>
+                    Đọc tiếp <span id="lib-detail-last-read" style="font-size: 0.9em; opacity: 0.9; margin-left: 4px;"></span>
+                  </button>
+                </div>
+                <div style="margin-top: 12px;">
+                  <label style="display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-secondary); cursor: pointer; user-select: none;">
+                    <input type="checkbox" id="lib-auto-delete-old" style="cursor: pointer;">
+                    Xóa ảnh tải về của các chap đã đọc cũ (chỉ giữ 10 chap gần nhất lúc cập nhật truyện)
+                  </label>
+                </div>
+              </div>
+            </div>
+
+            <div class="lib-detail-chapters-header">
+              <h3><span class="material-icons-round">list</span> Danh sách chapters</h3>
+            </div>
+            <div class="lib-detail-chapters" id="lib-detail-chapters"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ======================== -->
+      <!-- MOVIE MANAGER PAGE -->
+      <!-- ======================== -->
+      <section class="page" id="page-movies">
+        <div class="page-header">
+          <h1 class="page-title">
+            <span class="material-icons-round">movie</span>
+            Quản lý Phim
+          </h1>
+          <p class="page-subtitle">Lưu trữ phim muốn xem</p>
+        </div>
+
+        <div id="movie-list-view">
+          <!-- Movie Search -->
+          <div class="card glass-card" id="movie-search-card">
+            <div class="input-group">
+              <span class="input-icon material-icons-round">search</span>
+              <input type="text" id="movie-search" placeholder="Nhập tên phim (năm), VD: Inception (2010)" autocomplete="off">
+              <button class="btn btn-primary" id="btn-search-movie" title="Tìm phim">
+                <span class="material-icons-round">search</span>
+                <span>Tìm</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Search Results -->
+          <div class="card glass-card hidden" id="movie-results-card">
+            <h3 class="card-title">
+              <span class="material-icons-round">theaters</span>
+              Kết quả tìm kiếm
+            </h3>
+            <div class="movie-grid" id="movie-search-results">
+              <!-- Movies rendered here -->
+            </div>
+          </div>
+
+          <!-- Movie Categories Tabs -->
+          <div class="movie-categories" id="movie-categories">
+            <button class="category-tab active" data-category="watchlist">
+              <span class="material-icons-round">bookmark</span>
+              Muốn xem
+              <span class="category-count" id="count-watchlist">0</span>
+            </button>
+            <button class="category-tab" data-category="watching">
+              <span class="material-icons-round">play_circle</span>
+              Đang xem
+              <span class="category-count" id="count-watching">0</span>
+            </button>
+            <button class="category-tab" data-category="watched">
+              <span class="material-icons-round">done_all</span>
+              Đã xem
+              <span class="category-count" id="count-watched">0</span>
+            </button>
+          </div>
+
+          <!-- Saved Movies Grid -->
+          <div class="movie-grid" id="saved-movies-grid">
+            <div class="empty-state" id="movies-empty">
+              <span class="material-icons-round empty-icon">movie_filter</span>
+              <p>Chưa có phim nào</p>
+              <p class="empty-hint">Tìm kiếm và thêm phim yêu thích</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Detail View -->
+        <div id="movie-detail-view" class="hidden">
+          <div class="lib-detail-toolbar" style="display: flex; justify-content: space-between; margin-bottom: 16px;">
+            <button class="btn btn-secondary" id="movie-back-btn">
+              <span class="material-icons-round">arrow_back</span>
+              Quay lại
+            </button>
+          </div>
+
+          <div class="lib-detail-card card glass-card">
+            <div class="lib-detail-header">
+              <div class="lib-detail-cover" id="movie-detail-cover"></div>
+              <div class="lib-detail-info">
+                <h2 id="movie-detail-title"></h2>
+                <div class="comic-meta">
+                  <span class="badge badge-primary" id="movie-detail-rating"></span>
+                  <span class="badge badge-secondary" id="movie-detail-year"></span>
+                </div>
+                <div id="movie-detail-genres" class="comic-genres"></div>
+                <p id="movie-detail-desc" class="comic-desc"></p>
+              </div>
+            </div>
+
+            <div class="lib-detail-chapters-header">
+              <h3><span class="material-icons-round">list</span> Danh sách Tập Phim</h3>
+            </div>
+            <div id="movie-episodes-loading" class="hidden" style="text-align: center; padding: 20px; color: #aaa;">Đang tải danh sách tập...</div>
+            <div class="lib-detail-chapters" id="movie-detail-episodes"></div>
+            <div id="movie-detail-no-episodes" class="hidden" style="text-align: center; padding: 20px; color: #888;">Phim lẻ / Không có dữ liệu tập</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ======================== -->
+      <!-- MUSIC MANAGER PAGE -->
+      <!-- ======================== -->
+      <section class="page" id="page-music">
+        <div class="page-header">
+          <h1 class="page-title">
+            <span class="material-icons-round">music_note</span>
+            Tập Đàn
+          </h1>
+          <p class="page-subtitle">Tài liệu học và tập đàn (PDF, Text, Video)</p>
+        </div>
+
+        <div class="card glass-card" id="music-add-card">
+          <h3 class="card-title">
+            <span class="material-icons-round">add_circle</span>
+            Thêm tài liệu mới
+          </h3>
+          <form id="music-add-form" style="display: flex; flex-direction: column; gap: 12px; margin-top: 10px;">
+            <div class="input-form-group">
+              <input type="text" id="music-title" class="form-input" placeholder="Tên bài học/khóa học (bắt buộc)" required style="width: 100%; padding: 10px; border-radius: 8px; border: 1px solid var(--border-color); background: var(--bg-secondary); color: var(--text-primary);">
+            </div>
+            <div class="input-form-group" id="music-url-group">
+              <input type="url" id="music-url" class="form-input" placeholder="Đường dẫn (URL Youtube, Drive, trang web...)" style="width: 100%; padding: 10px; border-radius: 8px; border: 1px solid var(--border-color); background: var(--bg-secondary); color: var(--text-primary);">
+            </div>
+            <div class="input-form-group hidden" id="music-content-group">
+              <textarea id="music-content" class="form-input" rows="8" placeholder="Nhập lời bài hát và hợp âm ở đây..." style="width: 100%; padding: 10px; border-radius: 8px; border: 1px solid var(--border-color); background: var(--bg-secondary); color: var(--text-primary); resize: vertical; font-family: monospace; white-space: pre; line-height: 1.5;"></textarea>
+            </div>
+            <div class="input-form-group">
+              <select id="music-type" class="form-input" style="width: 100%; padding: 10px; border-radius: 8px; border: 1px solid var(--border-color); background: var(--bg-secondary); color: var(--text-primary);">
+                <option value="video">Video (Youtube, etc.)</option>
+                <option value="pdf">Tài liệu PDF</option>
+                <option value="text">Text/Hợp âm (Nhập tay)</option>
+                <option value="other">Link Khác</option>
+              </select>
+            </div>
+            <div class="input-form-group">
+              <textarea id="music-note" class="form-input" rows="2" placeholder="Ghi chú thêm (tùy chọn)" style="width: 100%; padding: 10px; border-radius: 8px; border: 1px solid var(--border-color); background: var(--bg-secondary); color: var(--text-primary); resize: vertical;"></textarea>
+            </div>
+            <button type="submit" class="btn btn-primary">
+              <span class="material-icons-round">save</span>
+              Lưu tài liệu
+            </button>
+          </form>
+        </div>
+
+        <div class="card glass-card" style="margin-top: 20px;">
+          <h3 class="card-title" style="display: flex; justify-content: space-between; align-items: center;">
+            <div>
+              <span class="material-icons-round">library_music</span>
+              Danh sách tài liệu
+            </div>
+          </h3>
+          <div id="music-list" class="music-grid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; margin-top: 15px;">
+            <!-- Danh sách tài liệu render ở đây -->
+          </div>
+          <div class="empty-state hidden" id="music-empty" style="text-align: center; padding: 30px; opacity: 0.7;">
+            <span class="material-icons-round empty-icon" style="font-size: 48px; opacity: 0.5;">library_music</span>
+            <p style="margin-top: 10px;">Chưa có tài liệu tập đàn nào</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- ======================== -->
+      <!-- SETTINGS PAGE -->
+      <!-- ======================== -->
+      <section class="page" id="page-settings">
+        <div class="page-header">
+          <h1 class="page-title">
+            <span class="material-icons-round">settings</span>
+            Cài đặt
+          </h1>
+        </div>
+
+        <div class="card glass-card">
+          <h3 class="card-title">
+            <span class="material-icons-round">storage</span>
+            Dữ liệu
+          </h3>
+          <div class="settings-actions">
+            <button class="btn btn-secondary" id="btn-export-data">
+              <span class="material-icons-round">cloud_download</span>
+              Xuất dữ liệu
+            </button>
+            <button class="btn btn-secondary" id="btn-import-data">
+              <span class="material-icons-round">cloud_upload</span>
+              Nhập dữ liệu
+            </button>
+            <button class="btn btn-danger" id="btn-clear-data">
+              <span class="material-icons-round">delete_forever</span>
+              Xóa tất cả dữ liệu
+            </button>
+          </div>
+          <input type="file" id="import-file" accept=".json" style="display:none">
+        </div>
+
+        <div class="card glass-card">
+          <h3 class="card-title">
+            <span class="material-icons-round">cloud_sync</span>
+            Supabase Cloud Sync
+          </h3>
+          <p style="font-size: 13px; color: var(--text-tertiary); margin-bottom: 12px;">Đồng bộ dữ liệu giữa thiết bị và đám mây Supabase</p>
+          <div id="cloud-sync-status" style="font-size: 13px; color: var(--text-secondary); margin-bottom: 12px;"></div>
+          <div class="settings-actions">
+            <button class="btn btn-secondary" id="btn-sync-to-cloud">
+              <span class="material-icons-round">cloud_upload</span>
+              Đẩy lên Cloud
+            </button>
+            <button class="btn btn-secondary" id="btn-sync-from-cloud">
+              <span class="material-icons-round">cloud_download</span>
+              Kéo từ Cloud
+            </button>
+          </div>
+        </div>
+
+        <div class="card glass-card">
+          <h3 class="card-title">
+            <span class="material-icons-round">info</span>
+            Thông tin
+          </h3>
+          <div class="about-info">
+            <p><strong>LuvTK Entertainment</strong> v1.0.0</p>
+            <p>Comic Crawler & Movie Manager</p>
+            <p class="tmdb-attr">This product uses the TMDB API but is not endorsed or certified by TMDB.</p>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- Comic Reader Overlay -->
+  <div class="reader-overlay hidden" id="reader-overlay">
+    <div class="reader-toolbar">
+      <button class="reader-btn" id="reader-close" title="Đóng (Esc)">
+        <span class="material-icons-round">close</span>
+      </button>
+      <div class="reader-title" id="reader-title">Chapter 1</div>
+      <div class="reader-nav-info">
+        <span id="reader-page-info">0/0</span>
+      </div>
+      <div class="reader-nav-btns">
+        <button class="reader-btn" id="reader-prev-ch" title="Chapter trước">
+          <span class="material-icons-round">skip_previous</span>
+        </button>
+        <button class="reader-btn" id="reader-next-ch" title="Chapter sau">
+          <span class="material-icons-round">skip_next</span>
+        </button>
+      </div>
+    </div>
+    <div class="reader-content" id="reader-content">
+      <!-- Images rendered here -->
+    </div>
+    <button class="reader-scroll-top hidden" id="reader-scroll-top" title="Lên đầu">
+      <span class="material-icons-round">keyboard_arrow_up</span>
+    </button>
+  </div>
+
+  <!-- Confirm Modal -->
+  <div id="confirm-modal" class="custom-modal hidden">
+    <div class="custom-modal-content glass-card">
+      <h3 class="custom-modal-title">Xác nhận</h3>
+      <p id="confirm-modal-msg" class="custom-modal-msg">Bạn có chắc chắn?</p>
+      <div class="custom-modal-actions">
+        <button class="btn btn-secondary" id="confirm-modal-cancel">Hủy</button>
+        <button class="btn btn-danger" id="confirm-modal-ok">Xác nhận</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Music Chord Reader Overlay (UkuTabs-style) -->
+  <div class="reader-overlay hidden" id="music-reader-overlay" style="z-index: 1000;">
+    <!-- Top bar -->
+    <div class="chord-reader-topbar">
+      <button class="reader-btn" id="music-reader-close" title="Đóng (Esc)">
+        <span class="material-icons-round">close</span>
+      </button>
+      <div class="chord-reader-song-title" id="music-reader-title">Tài liệu</div>
+      <a href="#" target="_blank" class="reader-btn" id="music-reader-external" title="Mở ở thẻ mới" style="text-decoration:none;">
+        <span class="material-icons-round">open_in_new</span>
+      </a>
+    </div>
+
+    <!-- Chord Diagrams Bar -->
+    <div class="chord-diagrams-bar" id="chord-diagrams-bar">
+      <!-- SVG chord diagrams rendered here -->
+    </div>
+
+    <!-- Control Toolbar -->
+    <div class="chord-toolbar" id="chord-toolbar">
+      <div class="chord-tool-group">
+        <span class="chord-tool-label">INST</span>
+        <div class="chord-tool-btns">
+          <button class="chord-speed-btn active" id="inst-guitar" style="width:auto;padding:0 6px;">Guit</button>
+          <button class="chord-speed-btn" id="inst-ukulele" style="width:auto;padding:0 6px;">Uke</button>
+        </div>
+      </div>
+      <div class="chord-tool-divider"></div>
+      <div class="chord-tool-group">
+        <span class="chord-tool-label">AUTOSCROLL</span>
+        <div class="chord-tool-btns">
+          <span class="chord-tool-sublabel">SPEED</span>
+          <button class="chord-speed-btn" data-speed="0">0</button>
+          <button class="chord-speed-btn" data-speed="1">1</button>
+          <button class="chord-speed-btn" data-speed="2">2</button>
+          <button class="chord-speed-btn" data-speed="3">3</button>
+          <button class="chord-speed-btn" data-speed="4">4</button>
+          <button class="chord-speed-btn" data-speed="5">5</button>
+        </div>
+      </div>
+      <div class="chord-tool-divider"></div>
+      <div class="chord-tool-group">
+        <span class="chord-tool-label">TRANSPOSER</span>
+        <div class="chord-tool-btns">
+          <button class="chord-transpose-btn" id="transpose-down" title="Giảm nửa cung">-</button>
+          <span class="chord-transpose-value" id="transpose-value">0</span>
+          <button class="chord-transpose-btn" id="transpose-up" title="Tăng nửa cung">+</button>
+        </div>
+      </div>
+      <div class="chord-tool-divider"></div>
+      <div class="chord-tool-group">
+        <span class="chord-tool-label">COLOR</span>
+        <div class="chord-tool-btns">
+          <input type="color" id="chord-color-picker" value="#e74c3c" class="chord-color-input" title="Màu hợp âm">
+        </div>
+      </div>
+      <div class="chord-tool-divider"></div>
+      <div class="chord-tool-group">
+        <span class="chord-tool-label">TEXT</span>
+        <input type="range" id="chord-text-size" min="12" max="24" value="16" class="chord-slider">
+      </div>
+      <div class="chord-tool-divider"></div>
+      <div class="chord-tool-group">
+        <span class="chord-tool-label">HEIGHT</span>
+        <input type="range" id="chord-line-height" min="14" max="36" value="22" class="chord-slider">
+      </div>
+      <div class="chord-tool-divider"></div>
+      <button class="chord-tool-reset" id="chord-reset" title="Reset về mặc định">reset</button>
+    </div>
+
+    <!-- Chord Content Area -->
+    <div class="chord-reader-body" id="chord-reader-body">
+      <div class="chord-content-wrapper" id="chord-content-wrapper">
+        <!-- Formatted chord content rendered here -->
+      </div>
+    </div>
+
+    <!-- Non-text content (iframe for video/pdf) -->
+    <div class="reader-content hidden" id="music-reader-content" style="flex: 1; display:flex; justify-content:center; align-items:center; overflow:hidden; padding: 10px;">
+      <!-- Iframe/embed injected here -->
+    </div>
+  </div>
+
+  <!-- Toast Notification -->
+  <div id="toast-container"></div>
+
+  <!-- Scripts -->
+  <script src="/js/config.js"></script>
+  <script src="/js/supabase-db.js"></script>
+  <script src="/js/db.js"></script>
+  <script src="/js/comic-crawler.js"></script>
+  <script src="/js/comic-library.js"></script>
+  <script src="/js/movie-manager.js"></script>
+  <script src="/js/music-manager.js"></script>
+  <script src="/js/comic-reader.js"></script>
+  <script src="/js/app.js"></script>
+</body>
+</html>
