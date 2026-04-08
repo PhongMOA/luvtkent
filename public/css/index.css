@@ -2394,6 +2394,7 @@ a:hover { text-decoration: underline; }
   z-index: 10;
   position: relative;
 }
+
 .chord-accordion-header {
   display: flex;
   align-items: center;
@@ -2405,22 +2406,197 @@ a:hover { text-decoration: underline; }
   transition: background 0.2s;
   border-bottom: 1px solid var(--border-color);
 }
+
 .chord-accordion-header:active {
   background: rgba(255,255,255,0.05);
 }
+
 .chord-accordion-content {
   overflow: hidden;
   transition: max-height 0.3s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.3s ease;
   max-height: 500px;
   opacity: 1;
 }
+
 .chord-accordion-content.collapsed {
   max-height: 0;
   opacity: 0;
 }
+
 .transition-transform {
   transition: transform 0.3s ease;
 }
+
 .rotate-180 {
   transform: rotate(180deg);
+}
+
+/* ================================
+   Mobile Responsive Styles
+   ================================ */
+
+@media (max-width: 768px) {
+  .navbar {
+    top: auto;
+    bottom: 0;
+    height: auto;
+    padding: 6px 8px;
+    padding-bottom: calc(6px + env(safe-area-inset-bottom, 0px));
+    flex-direction: row;
+    justify-content: center;
+    border-bottom: none;
+    border-top: 1px solid var(--border-color);
+  }
+
+  .nav-brand {
+    display: none;
+  }
+
+  .nav-tabs {
+    flex: 1;
+    justify-content: space-around;
+    gap: 0;
+  }
+
+  .nav-tab {
+    flex-direction: column;
+    padding: 6px 8px;
+    font-size: 10px;
+    gap: 2px;
+  }
+
+  .nav-tab .material-icons-round {
+    font-size: 22px;
+  }
+
+  .tab-text {
+    font-size: 10px;
+  }
+
+  .pages-container {
+    padding-top: 16px;
+    padding-bottom: calc(70px + env(safe-area-inset-bottom, 0px));
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+
+  .page-title {
+    font-size: 22px;
+    gap: 8px;
+  }
+
+  .page-title .material-icons-round {
+    font-size: 26px;
+  }
+
+  .page-subtitle {
+    margin-left: 34px;
+    font-size: 13px;
+  }
+
+  .card {
+    padding: 14px;
+  }
+
+  .input-group input {
+    padding: 12px 4px;
+    font-size: 16px;
+  }
+
+  .movie-grid {
+    grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+    gap: 10px;
+  }
+
+  .movie-card-actions {
+    opacity: 1;
+  }
+
+  .movie-save-select {
+    opacity: 1;
+  }
+
+  .comic-info {
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+  }
+
+  .lib-grid {
+    grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)) !important;
+    gap: 10px !important;
+  }
+
+  #toast-container {
+    right: 12px;
+    left: 12px;
+    max-width: none;
+    top: 12px;
+  }
+
+  .movie-categories {
+    gap: 6px;
+  }
+
+  .category-tab {
+    padding: 8px 14px;
+    font-size: 12px;
+  }
+
+  .reader-toolbar {
+    padding: 8px 12px;
+  }
+
+  .lib-detail-header {
+    flex-direction: column !important;
+    align-items: center;
+    text-align: center;
+  }
+
+  .chord-toolbar {
+    flex-wrap: wrap !important;
+    gap: 6px !important;
+  }
+
+  .chord-content-wrapper {
+    padding: 16px 12px 40px;
+    font-size: 14px;
+  }
+}
+
+@media (max-width: 480px) {
+  .movie-grid {
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+  }
+
+  .movie-card-title {
+    font-size: 12px;
+  }
+
+  .movie-card-year {
+    font-size: 11px;
+  }
+
+  .movie-card-btn .material-icons-round {
+    font-size: 14px;
+  }
+
+  .category-tab {
+    padding: 6px 10px;
+    font-size: 11px;
+  }
+
+  .results-actions {
+    flex-direction: column;
+  }
+
+  .settings-actions {
+    flex-direction: column;
+  }
+
+  .lib-detail-toolbar {
+    flex-direction: column !important;
+    gap: 8px !important;
+  }
 }
