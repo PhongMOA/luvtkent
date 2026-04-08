@@ -15,3 +15,13 @@ CREATE TABLE IF NOT EXISTS music (
   note TEXT,
   added_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- Fix: Add missing columns if the table was created previously without them
+ALTER TABLE music
+  ADD COLUMN IF NOT EXISTS content TEXT,
+  ADD COLUMN IF NOT EXISTS url TEXT,
+  ADD COLUMN IF NOT EXISTS type TEXT,
+  ADD COLUMN IF NOT EXISTS note TEXT;
+
+-- Fix RLS Error 401: Disable Row Level Security (RLS) entirely since the application functions as a local singleton
+ALTER TABLE music DISABLE ROW LEVEL SECURITY;

@@ -163,6 +163,7 @@ class AppDB {
   async saveMusic(musicData) {
     const data = { ...musicData, addedAt: musicData.addedAt || new Date().toISOString() };
     const result = await this._put('music', data);
+    this._cloudSync(cloud => cloud.saveMusic(data));
     return result;
   }
 
@@ -176,7 +177,9 @@ class AppDB {
   }
 
   async deleteMusic(id) {
-    return this._delete('music', id);
+    const result = await this._delete('music', id);
+    this._cloudSync(cloud => cloud.deleteMusic(id));
+    return result;
   }
 
   // ========= SETTINGS =========
@@ -258,8 +261,9 @@ class AppDB {
 
     const cloudMovies = await window.cloudDB.getAllMovies();
     const cloudComics = await window.cloudDB.getAllComics();
+    const cloudMusic = await window.cloudDB.getAllMusic(); // add music fetching
 
-    let synced = { movies: 0, comics: 0 };
+    let synced = { movies: 0, comics: 0, music: 0 };
 
     for (const movie of cloudMovies) {
       await this._put('movies', movie);
@@ -269,6 +273,11 @@ class AppDB {
     for (const comic of cloudComics) {
       await this._put('comicLibrary', comic);
       synced.comics++;
+    }
+
+    for (const m of cloudMusic) {
+      await this._put('music', m);
+      synced.music++;
     }
 
     return synced;

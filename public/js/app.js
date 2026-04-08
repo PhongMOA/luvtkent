@@ -16,6 +16,22 @@ const App = {
     // Load history
     ComicCrawler.loadHistory();
 
+    // Auto sync from cloud silently in background
+    setTimeout(async () => {
+      try {
+        console.log('🔄 Tự động đồng bộ từ Cloud...');
+        await window.appDB.syncFromCloud();
+        
+        // Refresh UI if we are on those tabs
+        MovieManager.loadMovies();
+        ComicLibrary.loadComics();
+        if (typeof MusicManager !== 'undefined') MusicManager.loadMusicList();
+        console.log('✅ Đồng bộ tự động hoàn tất!');
+      } catch (e) {
+        console.log('⚠️ Không thể đồng bộ tự động:', e.message);
+      }
+    }, 1000);
+
     // Load settings
     this.loadSettings();
 

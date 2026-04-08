@@ -107,6 +107,31 @@ class SupabaseDB {
     });
   }
 
+  // ========= MUSIC =========
+
+  async saveMusic(music) {
+    const row = this._musicToRow(music);
+    return this._request('/music', {
+      method: 'POST',
+      headers: { 'Prefer': 'return=representation,resolution=merge-duplicates' },
+      body: JSON.stringify(row),
+    });
+  }
+
+  async getMusic(id) {
+    const rows = await this._request(`/music?id=eq.${encodeURIComponent(id)}&limit=1`);
+    return rows && rows[0] ? this._rowToMusic(rows[0]) : null;
+  }
+
+  async getAllMusic() {
+    const rows = await this._request('/music?order=added_at.desc');
+    return rows ? rows.map(r => this._rowToMusic(r)) : [];
+  }
+
+  async deleteMusic(id) {
+    return this._request(`/music?id=eq.${encodeURIComponent(id)}`, { method: 'DELETE' });
+  }
+
   // ========= SETTINGS =========
 
   async setSetting(key, value) {
@@ -195,11 +220,35 @@ class SupabaseDB {
     };
   }
 
+  _musicToRow(music) {
+    return {
+      id: String(music.id),
+      title: music.title,
+      url: music.url || null,
+      content: music.content || null,
+      type: music.type || 'chords',
+      note: music.note || null,
+      added_at: music.addedAt || new Date().toISOString(),
+    };
+  }
+
+  _rowToMusic(row) {
+    return {
+      id: row.id,
+      title: row.title,
+      url: row.url,
+      content: row.content,
+      type: row.type,
+      note: row.note,
+      addedAt: row.added_at,
+    };
+  }
+
   // ========= SYNC =========
 
   async syncFromLocal(localDB) {
     console.log('[SupabaseDB] Starting push to Supabase...');
-    let synced = { movies: 0, comics: 0, settings: 0 };
+    let synced = { movies: 0, comics: 0, settings: 0, music: 0 };
 
     // Sync movies
     const movies = await localDB.getAllMovies();
@@ -213,6 +262,13 @@ class SupabaseDB {
     for (const comic of comics) {
       await this.saveComic(comic);
       synced.comics++;
+    }
+
+    // Sync music
+    const musicLib = await localDB.getAllMusic();
+    for (const m of musicLib) {
+      await this.saveMusic(m);
+      synced.music++;
     }
 
     console.log(`[SupabaseDB] Push complete:`, synced);

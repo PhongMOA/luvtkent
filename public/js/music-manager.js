@@ -206,6 +206,21 @@ const MusicManager = {
           this.closeReader();
         }
       });
+      
+      // Accordion toggle
+      const accordionBtn = document.getElementById('chord-accordion-toggle');
+      if (accordionBtn) {
+        accordionBtn.addEventListener('click', () => {
+          const content = document.getElementById('chord-accordion-content');
+          const icon = document.getElementById('chord-accordion-icon');
+          content.classList.toggle('collapsed');
+          if (content.classList.contains('collapsed')) {
+            icon.classList.add('rotate-180');
+          } else {
+            icon.classList.remove('rotate-180');
+          }
+        });
+      }
     }
 
     // Chord toolbar events

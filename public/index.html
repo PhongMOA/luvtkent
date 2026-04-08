@@ -621,61 +621,71 @@
       </a>
     </div>
 
-    <!-- Chord Diagrams Bar -->
-    <div class="chord-diagrams-bar" id="chord-diagrams-bar">
-      <!-- SVG chord diagrams rendered here -->
-    </div>
+    <!-- Accordion Wrapper for Chords & Toolbar -->
+    <div class="chord-accordion" id="chord-accordion">
+      <div class="chord-accordion-header" id="chord-accordion-toggle">
+        <span style="font-size: 13px; font-weight: 600; color: var(--text-secondary);">Công cụ & Hợp âm</span>
+        <span class="material-icons-round transition-transform" id="chord-accordion-icon" style="color: var(--text-secondary);">expand_less</span>
+      </div>
+      
+      <div class="chord-accordion-content" id="chord-accordion-content">
+        <!-- Chord Diagrams Bar -->
+        <div class="chord-diagrams-bar" id="chord-diagrams-bar">
+          <!-- SVG chord diagrams rendered here -->
+        </div>
 
-    <!-- Control Toolbar -->
-    <div class="chord-toolbar" id="chord-toolbar">
-      <div class="chord-tool-group">
-        <span class="chord-tool-label">INST</span>
-        <div class="chord-tool-btns">
-          <button class="chord-speed-btn active" id="inst-guitar" style="width:auto;padding:0 6px;">Guit</button>
-          <button class="chord-speed-btn" id="inst-ukulele" style="width:auto;padding:0 6px;">Uke</button>
+        <!-- Control Toolbar -->
+        <div class="chord-toolbar" id="chord-toolbar">
+          <div class="chord-tool-group">
+            <span class="chord-tool-label">INST</span>
+            <div class="chord-tool-btns">
+              <button class="chord-speed-btn active" id="inst-guitar" style="width:auto;padding:0 6px;">Guit</button>
+              <button class="chord-speed-btn" id="inst-ukulele" style="width:auto;padding:0 6px;">Uke</button>
+            </div>
+          </div>
+          <div class="chord-tool-divider"></div>
+          <div class="chord-tool-group">
+            <span class="chord-tool-label">AUTOSCROLL</span>
+            <div class="chord-tool-btns">
+              <span class="chord-tool-sublabel">SPEED</span>
+              <button class="chord-speed-btn" data-speed="0">0</button>
+              <button class="chord-speed-btn" data-speed="1">1</button>
+              <button class="chord-speed-btn" data-speed="2">2</button>
+              <button class="chord-speed-btn" data-speed="3">3</button>
+              <button class="chord-speed-btn" data-speed="4">4</button>
+              <button class="chord-speed-btn" data-speed="5">5</button>
+            </div>
+          </div>
+          <div class="chord-tool-divider"></div>
+          <div class="chord-tool-group">
+            <span class="chord-tool-label">TRANSPOSER</span>
+            <div class="chord-tool-btns">
+              <button class="chord-transpose-btn" id="transpose-down" title="Giảm nửa cung">-</button>
+              <span class="chord-transpose-value" id="transpose-value">0</span>
+              <button class="chord-transpose-btn" id="transpose-up" title="Tăng nửa cung">+</button>
+            </div>
+          </div>
+          <div class="chord-tool-divider"></div>
+          <div class="chord-tool-group">
+            <span class="chord-tool-label">COLOR</span>
+            <div class="chord-tool-btns">
+              <input type="color" id="chord-color-picker" value="#e74c3c" class="chord-color-input" title="Màu hợp âm">
+            </div>
+          </div>
+          <div class="chord-tool-divider"></div>
+          <div class="chord-tool-group">
+            <span class="chord-tool-label">TEXT</span>
+            <input type="range" id="chord-text-size" min="12" max="24" value="16" class="chord-slider">
+          </div>
+          <div class="chord-tool-divider"></div>
+          <div class="chord-tool-group">
+            <span class="chord-tool-label">HEIGHT</span>
+            <input type="range" id="chord-line-height" min="14" max="36" value="22" class="chord-slider">
+          </div>
+          <div class="chord-tool-divider"></div>
+          <button class="chord-tool-reset" id="chord-reset" title="Reset về mặc định">reset</button>
         </div>
       </div>
-      <div class="chord-tool-divider"></div>
-      <div class="chord-tool-group">
-        <span class="chord-tool-label">AUTOSCROLL</span>
-        <div class="chord-tool-btns">
-          <span class="chord-tool-sublabel">SPEED</span>
-          <button class="chord-speed-btn" data-speed="0">0</button>
-          <button class="chord-speed-btn" data-speed="1">1</button>
-          <button class="chord-speed-btn" data-speed="2">2</button>
-          <button class="chord-speed-btn" data-speed="3">3</button>
-          <button class="chord-speed-btn" data-speed="4">4</button>
-          <button class="chord-speed-btn" data-speed="5">5</button>
-        </div>
-      </div>
-      <div class="chord-tool-divider"></div>
-      <div class="chord-tool-group">
-        <span class="chord-tool-label">TRANSPOSER</span>
-        <div class="chord-tool-btns">
-          <button class="chord-transpose-btn" id="transpose-down" title="Giảm nửa cung">-</button>
-          <span class="chord-transpose-value" id="transpose-value">0</span>
-          <button class="chord-transpose-btn" id="transpose-up" title="Tăng nửa cung">+</button>
-        </div>
-      </div>
-      <div class="chord-tool-divider"></div>
-      <div class="chord-tool-group">
-        <span class="chord-tool-label">COLOR</span>
-        <div class="chord-tool-btns">
-          <input type="color" id="chord-color-picker" value="#e74c3c" class="chord-color-input" title="Màu hợp âm">
-        </div>
-      </div>
-      <div class="chord-tool-divider"></div>
-      <div class="chord-tool-group">
-        <span class="chord-tool-label">TEXT</span>
-        <input type="range" id="chord-text-size" min="12" max="24" value="16" class="chord-slider">
-      </div>
-      <div class="chord-tool-divider"></div>
-      <div class="chord-tool-group">
-        <span class="chord-tool-label">HEIGHT</span>
-        <input type="range" id="chord-line-height" min="14" max="36" value="22" class="chord-slider">
-      </div>
-      <div class="chord-tool-divider"></div>
-      <button class="chord-tool-reset" id="chord-reset" title="Reset về mặc định">reset</button>
     </div>
 
     <!-- Chord Content Area -->

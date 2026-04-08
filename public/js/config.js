@@ -6,7 +6,7 @@
 const AppConfig = {
   // Set your deployed server URL here when you deploy the backend
   // Examples: 'https://luvtk-ent.onrender.com', 'https://your-vps-ip:3000'
-  REMOTE_SERVER_URL: 'http://192.168.1.100:3000', // <-- Change this to your server IP/URL
+  REMOTE_SERVER_URL: 'https://luvtk-ent.up.railway.app', // <-- Change this to your server IP/URL
 
   // Auto-detect if running inside Capacitor (Android app)
   isNative() {

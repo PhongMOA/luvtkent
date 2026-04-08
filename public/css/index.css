@@ -299,6 +299,7 @@ a:hover { text-decoration: underline; }
 
 .input-group input {
   flex: 1;
+  min-width: 0;
   padding: 14px 4px;
   background: transparent;
   border: none;
@@ -306,10 +307,12 @@ a:hover { text-decoration: underline; }
   font-family: var(--font-family);
   font-size: 14px;
   outline: none;
+  text-overflow: ellipsis;
 }
 
 .input-group input::placeholder {
   color: var(--text-tertiary);
+  text-overflow: ellipsis;
 }
 
 .input-hint {
@@ -2381,4 +2384,43 @@ a:hover { text-decoration: underline; }
     height: 24px;
     font-size: 11px;
   }
+}
+
+/* Chord Accordion */
+.chord-accordion {
+  background: var(--bg-primary);
+  border-bottom: 1px solid var(--border-color);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+  z-index: 10;
+  position: relative;
+}
+.chord-accordion-header {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 8px 16px;
+  cursor: pointer;
+  background: rgba(255,255,255,0.02);
+  transition: background 0.2s;
+  border-bottom: 1px solid var(--border-color);
+}
+.chord-accordion-header:active {
+  background: rgba(255,255,255,0.05);
+}
+.chord-accordion-content {
+  overflow: hidden;
+  transition: max-height 0.3s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.3s ease;
+  max-height: 500px;
+  opacity: 1;
+}
+.chord-accordion-content.collapsed {
+  max-height: 0;
+  opacity: 0;
+}
+.transition-transform {
+  transition: transform 0.3s ease;
+}
+.rotate-180 {
+  transform: rotate(180deg);
 }
