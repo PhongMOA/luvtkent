@@ -45,6 +45,12 @@ const App = {
     // Setup settings handlers
     this.setupSettings();
 
+    // Display version
+    document.getElementById('app-version-text').textContent = `v${AppConfig.APP_VERSION}`;
+
+    // Auto check for updates
+    setTimeout(() => this.checkForUpdates(true), 3000);
+
     console.log('🎬 LuvTK Entertainment initialized');
   },
 
@@ -161,6 +167,46 @@ const App = {
       btn.disabled = false;
       btn.innerHTML = '<span class="material-icons-round">cloud_download</span> Kéo từ Cloud';
     });
+
+    // Check for updates button
+    document.getElementById('btn-check-update').addEventListener('click', () => {
+      this.checkForUpdates(false);
+    });
+  },
+
+  async checkForUpdates(silent) {
+    const btn = document.getElementById('btn-check-update');
+    const statusEl = document.getElementById('update-check-status');
+    const banner = document.getElementById('update-banner');
+
+    if (!silent) {
+      btn.disabled = true;
+      btn.innerHTML = '<span class="material-icons-round spin">sync</span> Đang kiểm tra...';
+      statusEl.textContent = '';
+    }
+
+    const update = await AppConfig.checkForUpdates(silent);
+
+    if (update) {
+      // Show update banner
+      banner.classList.remove('hidden');
+      document.getElementById('update-version-info').textContent = 
+        `v${update.current} → v${update.latest}`;
+      document.getElementById('update-download-link').href = update.url;
+
+      if (!silent) {
+        this.showToast(`Có phiên bản mới v${update.latest}!`, 'success');
+      }
+    } else if (!silent) {
+      statusEl.innerHTML = `<span style="color:var(--success)">✓ Đang dùng bản mới nhất (v${AppConfig.APP_VERSION})</span>`;
+      banner.classList.add('hidden');
+      this.showToast('Bạn đang dùng phiên bản mới nhất!', 'info');
+    }
+
+    if (!silent) {
+      btn.disabled = false;
+      btn.innerHTML = '<span class="material-icons-round">system_update</span> Kiểm tra cập nhật';
+    }
   },
 
   // Toast notification system
