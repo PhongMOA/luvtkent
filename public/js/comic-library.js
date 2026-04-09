@@ -253,9 +253,7 @@ const ComicLibrary = {
               <button class="lib-card-action lib-action-star" title="Gắn sao / Bỏ sao">
                 <span class="material-icons-round" style="${comic.isStarred ? 'color: gold;' : ''}">${comic.isStarred ? 'star' : 'star_border'}</span>
               </button>
-              <button class="lib-card-action lib-action-read" title="Đọc">
-                <span class="material-icons-round">auto_stories</span>
-              </button>
+
               <button class="lib-card-action lib-action-detail" title="Chi tiết">
                 <span class="material-icons-round">info</span>
               </button>
@@ -284,10 +282,7 @@ const ComicLibrary = {
         this.toggleStar(id);
       });
 
-      card.querySelector('.lib-action-read').addEventListener('click', (e) => {
-        e.stopPropagation();
-        this.readComic(id);
-      });
+
 
       card.querySelector('.lib-action-detail').addEventListener('click', (e) => {
         e.stopPropagation();
