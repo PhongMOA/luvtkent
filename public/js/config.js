@@ -5,6 +5,7 @@
  */
 const AppConfig = {
   // Set your deployed server URL here when you deploy the backend
+  // Set your deployed server URL here when you deploy the backend
   // Examples: 'https://luvtk-ent.onrender.com', 'https://your-vps-ip:3000'
   REMOTE_SERVER_URL: 'https://luvtk-ent.up.railway.app', // <-- Change this to your server IP/URL
 
@@ -21,8 +22,12 @@ const AppConfig = {
     if (this.isNative()) {
       return this.REMOTE_SERVER_URL;
     }
-    // In browser, use relative path (same origin)
-    return '';
+    // On localhost, Express serves both frontend + API (same origin)
+    if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+      return '';
+    }
+    // On Vercel or any other static host, route API to Railway
+    return this.REMOTE_SERVER_URL;
   },
 
   // Build full API URL
