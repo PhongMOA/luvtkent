@@ -1,12 +1,27 @@
 const axios = require('axios');
 const cheerio = require('cheerio');
 
+// Full Chrome browser headers to bypass Cloudflare basic bot detection
 const HEADERS = {
-  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-  'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+  'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
   'Accept-Language': 'vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7',
-  'Referer': 'https://www.toptruyenssi.com/',
+  'Accept-Encoding': 'gzip, deflate',
+  'Cache-Control': 'no-cache',
+  'Pragma': 'no-cache',
+  'Sec-Ch-Ua': '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
+  'Sec-Ch-Ua-Mobile': '?0',
+  'Sec-Ch-Ua-Platform': '"Windows"',
+  'Sec-Fetch-Dest': 'document',
+  'Sec-Fetch-Mode': 'navigate',
+  'Sec-Fetch-Site': 'none',
+  'Sec-Fetch-User': '?1',
+  'Upgrade-Insecure-Requests': '1',
+  'Referer': 'https://www.google.com/',
 };
+
+// Cookie jar to persist Cloudflare cookies across requests
+let cookieJar = '';
 
 // Delay utility
 function delay(ms) {
@@ -14,24 +29,57 @@ function delay(ms) {
 }
 
 /**
- * Fetch page HTML with retry logic
+ * Fetch page HTML with retry logic + exponential backoff
  */
-async function fetchPage(url, retries = 3) {
+async function fetchPage(url, retries = 5) {
+  let lastErr;
   for (let i = 0; i < retries; i++) {
     try {
-      console.log(`[FETCH] Fetching: ${url.substring(0, 80)}...`);
+      console.log(`[FETCH] Attempt ${i + 1}/${retries}: ${url.substring(0, 100)}`);
+      const headers = { ...HEADERS };
+      if (cookieJar) headers['Cookie'] = cookieJar;
+
       const response = await axios.get(url, {
-        headers: HEADERS,
-        timeout: 30000,
+        headers,
+        timeout: 45000,
         maxRedirects: 5,
+        decompress: true,
+        validateStatus: (s) => s >= 200 && s < 400,
       });
+
+      // Persist cookies (especially Cloudflare's cf_clearance, XSRF-TOKEN, laravel_session)
+      const setCookies = response.headers['set-cookie'];
+      if (setCookies && setCookies.length) {
+        cookieJar = setCookies.map(c => c.split(';')[0]).join('; ');
+      }
+
       return response.data;
     } catch (err) {
-      console.error(`Attempt ${i + 1} failed for ${url}:`, err.message);
-      if (i < retries - 1) await delay(2000);
+      lastErr = err;
+      const status = err.response?.status;
+      const code = err.code;
+      console.error(`[FETCH] Attempt ${i + 1} failed (${code || status || 'unknown'}): ${err.message}`);
+
+      // Don't retry on 404 - resource doesn't exist
+      if (status === 404) {
+        throw new Error(`Page not found (404): ${url}`);
+      }
+
+      // 403 from Cloudflare → retry with backoff (cookie may be picked up)
+      // Don't retry on other 4xx (except 429 rate limit)
+      if (status && status >= 400 && status < 500 && status !== 429 && status !== 403) {
+        throw new Error(`HTTP ${status}: ${url}`);
+      }
+
+      // Exponential backoff: 2s, 4s, 8s, 16s
+      if (i < retries - 1) {
+        const backoff = Math.min(2000 * Math.pow(2, i), 16000);
+        console.log(`[FETCH] Retrying in ${backoff}ms...`);
+        await delay(backoff);
+      }
     }
   }
-  throw new Error(`Failed to fetch ${url} after ${retries} retries`);
+  throw new Error(`Failed to fetch ${url} after ${retries} retries. Last error: ${lastErr?.message || 'unknown'}`);
 }
 
 /**
