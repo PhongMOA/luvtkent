@@ -1965,8 +1965,25 @@ a:hover { text-decoration: underline; }
 /* Mobile adjustments for library */
 @media (max-width: 600px) {
   .lib-stats {
-    flex-direction: column;
-    gap: 8px;
+    flex-direction: row;
+    gap: 6px;
+  }
+
+  .lib-stat-item {
+    padding: 8px 10px;
+    gap: 6px;
+  }
+
+  .lib-stat-item .material-icons-round {
+    font-size: 16px;
+  }
+
+  .lib-stat-value {
+    font-size: 15px;
+  }
+
+  .lib-stat-label {
+    font-size: 11px;
   }
 
   .lib-grid {

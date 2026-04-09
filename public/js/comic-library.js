@@ -60,10 +60,14 @@ const ComicLibrary = {
   },
 
   async updateComic(comic) {
-    if (!comic.url) {
+    // Fallback: url -> sourceUrl -> id (id is usually the source URL)
+    const sourceUrl = comic.url || comic.sourceUrl || (comic.id && comic.id.startsWith('http') ? comic.id : null);
+    if (!sourceUrl) {
       App.showToast('Truyện này không có Link tổng để cập nhật!', 'error');
       return;
     }
+    // Persist the resolved url back to comic for future use
+    comic.url = sourceUrl;
 
     const updateBtn = document.getElementById('lib-update-comic-btn');
     const originalText = updateBtn.innerHTML;

@@ -19,6 +19,10 @@ const App = {
     // Auto sync from cloud silently in background
     setTimeout(async () => {
       try {
+        // One-time fix: patch comics missing source_url on Supabase (id = url)
+        const fixed = await window.cloudDB.fixMissingSourceUrls();
+        if (fixed > 0) console.log(`🔧 Đã sửa ${fixed} truyện thiếu source_url`);
+
         console.log('🔄 Tự động đồng bộ từ Cloud...');
         await window.appDB.syncFromCloud();
         

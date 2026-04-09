@@ -192,7 +192,7 @@ class SupabaseDB {
       status: comic.status || null,
       genres: comic.genres || [],
       description: comic.description || null,
-      source_url: comic.sourceUrl || null,
+      source_url: comic.url || comic.sourceUrl || null,
       chapters: comic.chapters || [],
       last_read_chapter: comic.lastReadChapter !== undefined ? comic.lastReadChapter : null,
       last_read_at: comic.lastReadAt || null,
@@ -210,6 +210,7 @@ class SupabaseDB {
       status: row.status,
       genres: row.genres || [],
       description: row.description,
+      url: row.source_url,
       sourceUrl: row.source_url,
       chapters: row.chapters || [],
       lastReadChapter: row.last_read_chapter,
@@ -242,6 +243,38 @@ class SupabaseDB {
       note: row.note,
       addedAt: row.added_at,
     };
+  }
+
+  // ========= AUTO-FIX: Patch missing source_url from id =========
+
+  async fixMissingSourceUrls() {
+    try {
+      // Fetch comics that have no source_url (filter http IDs client-side)
+      const rows = await this._request('/comics?source_url=is.null&select=id');
+      const httpRows = (rows || []).filter(r => r.id && r.id.startsWith('http'));
+      
+      if (httpRows.length === 0) {
+        console.log('[SupabaseDB] All comics already have source_url ✓');
+        return 0;
+      }
+
+      console.log(`[SupabaseDB] Fixing ${httpRows.length} comics missing source_url...`);
+      let fixed = 0;
+
+      for (const row of httpRows) {
+        await this._request(`/comics?id=eq.${encodeURIComponent(row.id)}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ source_url: row.id }),
+        });
+        fixed++;
+      }
+
+      console.log(`[SupabaseDB] Fixed ${fixed} comics ✓`);
+      return fixed;
+    } catch (err) {
+      console.warn('[SupabaseDB] fixMissingSourceUrls error:', err.message);
+      return 0;
+    }
   }
 
   // ========= SYNC =========
