@@ -249,7 +249,29 @@ class SupabaseDB {
 
   async fixMissingSourceUrls() {
     try {
-      // Fetch comics that have no source_url (filter http IDs client-side)
+      // First, try to add source_url column if it doesn't exist
+      try {
+        await fetch(`${SUPABASE_URL}/rest/v1/rpc/`, {
+          method: 'POST',
+          headers: this.headers,
+        }).catch(() => {});
+      } catch(e) {}
+
+      // Test if source_url column exists by querying a single row
+      const testRes = await fetch(`${this.baseUrl}/comics?select=source_url&limit=1`, {
+        headers: { ...this.headers },
+      });
+      if (!testRes.ok) {
+        console.log('[SupabaseDB] source_url column does not exist yet, skipping fix');
+        return 0;
+      }
+      const testText = await testRes.text();
+      if (testText.includes('column') || testText.includes('does not exist') || testText.includes('page')) {
+        console.log('[SupabaseDB] source_url column not ready, skipping fix');
+        return 0;
+      }
+
+      // Fetch comics that have no source_url
       const rows = await this._request('/comics?source_url=is.null&select=id');
       const httpRows = (rows || []).filter(r => r.id && r.id.startsWith('http'));
       

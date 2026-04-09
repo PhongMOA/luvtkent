@@ -1,9 +1,10 @@
 -- Run this in your Supabase SQL Editor to add the new columns for the Music tab feature and Star/Featured feature
 
--- Add is_starred and auto_delete_old_chapters columns to 'comics' table if they don't exist
+-- Add is_starred, auto_delete_old_chapters, and source_url columns to 'comics' table if they don't exist
 ALTER TABLE comics 
   ADD COLUMN IF NOT EXISTS is_starred BOOLEAN DEFAULT false,
-  ADD COLUMN IF NOT EXISTS auto_delete_old_chapters BOOLEAN DEFAULT false;
+  ADD COLUMN IF NOT EXISTS auto_delete_old_chapters BOOLEAN DEFAULT false,
+  ADD COLUMN IF NOT EXISTS source_url TEXT;
 
 -- If you also want to sync Music materials, you should create the 'music' table
 CREATE TABLE IF NOT EXISTS music (
