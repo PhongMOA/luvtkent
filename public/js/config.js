@@ -12,7 +12,7 @@ const AppConfig = {
   GITHUB_RELEASES_URL: 'https://github.com/PhongMOA/luvtkent/releases',
 
   // Backend server URL
-  REMOTE_SERVER_URL: 'https://luvtk-ent.up.railway.app',
+  REMOTE_SERVER_URL: 'https://luvtkent.onrender.com',
 
   // Auto-detect if running inside Capacitor (Android app)
   isNative() {
@@ -48,19 +48,33 @@ const AppConfig = {
     return url;
   },
 
-  // Check for app updates from GitHub
+  // Check for app updates from GitHub Releases
   async checkForUpdates(silent = true) {
     try {
-      const rawUrl = `https://raw.githubusercontent.com/${this.GITHUB_REPO}/main/package.json`;
-      const res = await fetch(rawUrl, { cache: 'no-store' });
-      if (!res.ok) return null;
+      const apiUrl = `https://api.github.com/repos/${this.GITHUB_REPO}/releases/latest`;
+      const res = await fetch(apiUrl, {
+        cache: 'no-store',
+        headers: { 'Accept': 'application/vnd.github+json' },
+      });
+      if (!res.ok) {
+        if (!silent) console.warn(`[Update] GitHub API HTTP ${res.status}`);
+        return null;
+      }
 
-      const pkg = await res.json();
-      const latest = pkg.version;
+      const release = await res.json();
+      const latest = (release.tag_name || '').replace(/^v/i, '').trim();
       const current = this.APP_VERSION;
+      if (!latest) return null;
 
       if (this._isNewer(latest, current)) {
-        return { current, latest, url: this.GITHUB_RELEASES_URL };
+        const apkAsset = (release.assets || []).find(a => /\.apk$/i.test(a.name));
+        return {
+          current,
+          latest,
+          url: apkAsset ? apkAsset.browser_download_url : release.html_url,
+          releaseUrl: release.html_url,
+          notes: release.body || '',
+        };
       }
       if (!silent) {
         console.log(`[Update] Đang dùng phiên bản mới nhất (v${current})`);

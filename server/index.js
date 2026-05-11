@@ -630,61 +630,80 @@ app.get('/api/karaoke/fetch-lyrics', async (req, res) => {
  * Proxy images to bypass CORS/Referer restrictions
  */
 app.get('/api/proxy-image', async (req, res) => {
+  const axios = require('axios');
+  const { url } = req.query;
+  if (!url) return res.status(400).send('URL required');
+
+  const decoded = decodeURIComponent(url);
+  let referer = 'https://www.toptruyenssi.com/';
   try {
-    const { url } = req.query;
-    if (!url) return res.status(400).send('URL required');
+    const host = new URL(decoded).host;
+    if (/tcomic\.top|wasabisys\.com/i.test(host)) referer = 'https://tcomicfanq.com/';
+  } catch (_) {}
 
-    const decoded = decodeURIComponent(url);
-    let referer = 'https://www.toptruyenssi.com/';
-    try {
-      const host = new URL(decoded).host;
-      if (/tcomic\.top|wasabisys\.com/i.test(host)) referer = 'https://tcomicfanq.com/';
-    } catch (_) {}
+  const headers = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+    'Accept-Language': 'vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7',
+    'Referer': referer,
+    'Sec-Fetch-Dest': 'image',
+    'Sec-Fetch-Mode': 'no-cors',
+    'Sec-Fetch-Site': 'cross-site',
+  };
 
-    const gotScraping = await loadGotScraping();
-    const stream = gotScraping.stream({
-      url: decoded,
-      timeout: { request: 30000 },
-      retry: { limit: 0 },
-      headers: {
-        Referer: referer,
-        Accept: 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
-      },
-      headerGeneratorOptions: {
-        browsers: [{ name: 'chrome', minVersion: 120 }],
-        devices: ['desktop'],
-        locales: ['vi-VN', 'en-US'],
-        operatingSystems: ['windows'],
-      },
+  try {
+    const response = await axios.get(decoded, {
+      responseType: 'stream',
+      timeout: 30000,
+      headers,
+      maxRedirects: 5,
+      validateStatus: (s) => s >= 200 && s < 400,
     });
 
-    let headersSent = false;
-    stream.on('response', (resp) => {
-      if (headersSent) return;
-      headersSent = true;
-      if (resp.statusCode >= 400) {
-        res.status(resp.statusCode).end();
-        stream.destroy();
-        return;
-      }
-      if (resp.headers['content-type']) res.set('Content-Type', resp.headers['content-type']);
-      if (resp.headers['content-length']) res.set('Content-Length', resp.headers['content-length']);
-      res.set('Cache-Control', 'public, max-age=86400');
+    if (response.headers['content-type']) res.set('Content-Type', response.headers['content-type']);
+    if (response.headers['content-length']) res.set('Content-Length', response.headers['content-length']);
+    res.set('Cache-Control', 'public, max-age=86400');
+
+    response.data.on('error', (err) => {
+      console.error('[PROXY-IMAGE] stream error:', err.message);
+      if (!res.headersSent) res.status(502).end();
+      else res.end();
     });
 
-    stream.on('error', (err) => {
-      console.error('[PROXY-IMAGE]', err.message);
-      if (!headersSent) {
-        res.status(502).send('Error proxying image');
-      } else {
-        res.end();
-      }
-    });
-
-    stream.pipe(res);
+    response.data.pipe(res);
   } catch (err) {
-    console.error('[PROXY-IMAGE] fatal:', err.message);
-    if (!res.headersSent) res.status(500).send('Error proxying image');
+    const status = err.response?.status;
+    console.error(`[PROXY-IMAGE] ${status || 'ERR'} ${decoded.substring(0, 100)} — ${err.message}`);
+
+    // Fallback: if axios got 403/Cloudflare, try got-scraping to bypass TLS fingerprint check
+    if (status === 403 || status === 503) {
+      try {
+        const gotScraping = await loadGotScraping();
+        const resp = await gotScraping({
+          url: decoded,
+          responseType: 'buffer',
+          timeout: { request: 30000 },
+          retry: { limit: 0 },
+          headers: { Referer: referer, Accept: headers.Accept },
+          headerGeneratorOptions: {
+            browsers: [{ name: 'chrome', minVersion: 120 }],
+            devices: ['desktop'],
+            locales: ['vi-VN', 'en-US'],
+            operatingSystems: ['windows'],
+          },
+        });
+        if (resp.statusCode >= 400) {
+          return res.status(resp.statusCode).end();
+        }
+        if (resp.headers['content-type']) res.set('Content-Type', resp.headers['content-type']);
+        res.set('Cache-Control', 'public, max-age=86400');
+        return res.send(resp.body);
+      } catch (gErr) {
+        console.error('[PROXY-IMAGE] got-scraping fallback failed:', gErr.message);
+      }
+    }
+
+    if (!res.headersSent) res.status(status || 502).send('Error proxying image');
   }
 });
 
