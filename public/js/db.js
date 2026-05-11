@@ -4,7 +4,7 @@
  * With automatic cloud sync to Supabase
  */
 const DB_NAME = 'luvtk_ent';
-const DB_VERSION = 3;
+const DB_VERSION = 4;
 
 class AppDB {
   constructor() {
@@ -43,6 +43,13 @@ class AppDB {
           const musicStore = db.createObjectStore('music', { keyPath: 'id' });
           musicStore.createIndex('type', 'type', { unique: false });
           musicStore.createIndex('addedAt', 'addedAt', { unique: false });
+        }
+
+        // Karaoke songs store
+        if (!db.objectStoreNames.contains('karaoke')) {
+          const karaokeStore = db.createObjectStore('karaoke', { keyPath: 'id' });
+          karaokeStore.createIndex('title', 'title', { unique: false });
+          karaokeStore.createIndex('addedAt', 'addedAt', { unique: false });
         }
 
         // Settings store
@@ -182,6 +189,30 @@ class AppDB {
     return result;
   }
 
+  // ========= KARAOKE =========
+
+  async saveKaraoke(song) {
+    const data = { ...song, addedAt: song.addedAt || new Date().toISOString(), updatedAt: new Date().toISOString() };
+    const result = await this._put('karaoke', data);
+    this._cloudSync(cloud => cloud.saveKaraoke && cloud.saveKaraoke(data));
+    return result;
+  }
+
+  async getKaraoke(id) {
+    return this._get('karaoke', id);
+  }
+
+  async getAllKaraoke() {
+    const all = await this._getAll('karaoke');
+    return all.sort((a, b) => new Date(b.addedAt) - new Date(a.addedAt));
+  }
+
+  async deleteKaraoke(id) {
+    const result = await this._delete('karaoke', id);
+    this._cloudSync(cloud => cloud.deleteKaraoke && cloud.deleteKaraoke(id));
+    return result;
+  }
+
   // ========= SETTINGS =========
 
   async setSetting(key, value) {
@@ -202,14 +233,16 @@ class AppDB {
     const history = await this.getCrawlHistory();
     const comics = await this.getAllComics();
     const music = await this.getAllMusic();
+    const karaoke = await this.getAllKaraoke();
 
     return {
-      version: 3,
+      version: 4,
       exportedAt: new Date().toISOString(),
       movies,
       crawlHistory: history,
       comicLibrary: comics,
       music,
+      karaoke,
       settings: {}
     };
   }
@@ -235,6 +268,11 @@ class AppDB {
         await this.saveMusic(mat);
       }
     }
+    if (data.karaoke) {
+      for (const song of data.karaoke) {
+        await this.saveKaraoke(song);
+      }
+    }
   }
 
   async clearAll() {
@@ -242,6 +280,7 @@ class AppDB {
     await this._clear('crawlHistory');
     await this._clear('comicLibrary');
     await this._clear('music');
+    await this._clear('karaoke');
     await this._clear('settings');
   }
 

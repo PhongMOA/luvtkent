@@ -1,4 +1,6 @@
 const cheerio = require('cheerio');
+const CryptoJS = require('crypto-js');
+const axios = require('axios');
 
 // Lazy-load got-scraping (ESM only) via dynamic import
 let gotScrapingPromise = null;
@@ -7,6 +9,112 @@ function loadGotScraping() {
     gotScrapingPromise = import('got-scraping').then(m => m.gotScraping);
   }
   return gotScrapingPromise;
+}
+
+// ============================================================
+// SITE: tcomicfanq.com  (React SPA + signed REST API)
+// ============================================================
+const TCOMIC_API_BASE = 'https://api.tcomicfanq.com';
+const TCOMIC_SECRET = 'sTUSpQjxBQIW3EdsadsauVEo6ZGmIEp6zxJgJV';
+const TCOMIC_HE = {
+  '/api/web/comic/info': 'zQ7hB5vC3kL9pM2n',
+  '/api/web/comic/chapters': 'tR8cX4vB2nM6pH9q',
+};
+
+function isTcomicUrl(url) {
+  return /tcomicfanq\.com/i.test(url);
+}
+
+// Build signed x-request-id matching frontend bundle algorithm
+function tcomicSign(signPath, params) {
+  const a = TCOMIC_HE[signPath];
+  const hourMs = (() => { const d = new Date(); d.setMinutes(0, 0, 0); return d.valueOf(); })();
+  const sortedKeys = Object.keys(params).sort();
+  const sorted = {};
+  sortedKeys.forEach(k => { sorted[k] = String(params[k]); });
+  const plaintext = `${a}-${signPath}-iHbS0oIGYjVaLwvjynBpjQFtc5YCCGX6-${hourMs}-${JSON.stringify(sorted)}`;
+  return CryptoJS.AES.encrypt(plaintext, TCOMIC_SECRET).toString();
+}
+
+async function tcomicApiGet(fullPath, params = {}) {
+  const signPath = fullPath.replace(/\/\d+(?=\/|$)/g, '');
+  const reqId = tcomicSign(signPath, params);
+  const res = await axios.get(TCOMIC_API_BASE + fullPath, {
+    params,
+    timeout: 30000,
+    headers: {
+      'x-request-id': reqId,
+      'Origin': 'https://tcomicfanq.com',
+      'Referer': 'https://tcomicfanq.com/',
+      'Accept': 'application/json',
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    },
+  });
+  return res.data;
+}
+
+// Extract numeric comic id from a tcomicfanq url like
+// https://tcomicfanq.com/truyen-tranh/vi-toi-da-giet-nguoi-28698
+function tcomicExtractComicId(url) {
+  const m = url.match(/-(\d+)(?:\/)?$/);
+  if (!m) throw new Error('Không tìm được comic id trong URL tcomicfanq');
+  return m[1];
+}
+
+// Extract chapter id from a tcomicfanq chapter url like
+// https://tcomicfanq.com/truyen-tranh/<slug>-<comicId>/chuong/<chapterSlug>-<chapterId>
+function tcomicExtractChapterIds(url) {
+  const m = url.match(/^tcomic:(\d+):(\d+)$/);
+  if (m) return { comicId: m[1], chapterId: m[2] };
+  // Fallback: parse a real URL
+  const parts = url.split('/').filter(Boolean);
+  // Look for two trailing -<id> segments
+  const ids = parts.map(p => (p.match(/-(\d+)$/) || [])[1]).filter(Boolean);
+  if (ids.length < 2) throw new Error('Không tìm được chapter/comic id trong URL tcomicfanq');
+  return { comicId: ids[0], chapterId: ids[ids.length - 1] };
+}
+
+async function getComicInfoTcomic(url) {
+  const comicId = tcomicExtractComicId(url);
+  const data = await tcomicApiGet(`/api/web/comic/info/${comicId}`);
+  if (data.code !== 0 || !data.data) {
+    throw new Error(data.message || 'Tcomic API error');
+  }
+  const d = data.data;
+
+  // Build chapter list. We embed comicId+chapterId in a synthetic URL so
+  // getChapterImages can recover them later without re-hitting the API.
+  const chapters = (d.chapters || []).map(ch => ({
+    title: ch.name,
+    url: `tcomic:${comicId}:${ch.id}`,
+  }));
+  // Reverse so oldest first (API returns newest first)
+  chapters.reverse();
+
+  return {
+    title: d.title || '',
+    altName: (d.other_names && d.other_names[0]) || '',
+    status: d.status === 'ONGOING' ? 'Đang tiến hành' : (d.status || 'Đang cập nhật'),
+    genres: (d.genres || []).map(g => g.name),
+    description: (d.description || '').replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim(),
+    cover: d.thumbnail || '',
+    url,
+    chapters,
+    totalChapters: chapters.length,
+  };
+}
+
+async function getChapterImagesTcomic(chapterUrl) {
+  const { comicId, chapterId } = tcomicExtractChapterIds(chapterUrl);
+  const data = await tcomicApiGet(`/api/web/comic/chapters/${chapterId}`, { comicId, chapterId });
+  if (data.code !== 0 || !data.data) {
+    throw new Error(data.message || 'Tcomic chapter API error');
+  }
+  const images = (data.data.images || [])
+    .sort((a, b) => (a.page || 0) - (b.page || 0))
+    .map(img => img.src)
+    .filter(Boolean);
+  return images;
 }
 
 // Delay utility
@@ -73,10 +181,20 @@ async function fetchPage(url, retries = 5) {
 }
 
 /**
- * Extract comic info + chapter list from a comic detail page
- * URL format: https://www.toptruyenssi.com/truyen-tranh/[slug]/[id]
+ * Extract comic info + chapter list from a comic detail page.
+ * Routes to the right adapter based on URL host.
  */
 async function getComicInfo(url) {
+  if (isTcomicUrl(url)) {
+    return getComicInfoTcomic(url);
+  }
+  return getComicInfoLegacy(url);
+}
+
+/**
+ * Legacy NetTruyen/TopTruyen-style HTML scrape (default for unknown sites).
+ */
+async function getComicInfoLegacy(url) {
   const html = await fetchPage(url);
   const $ = cheerio.load(html);
 
@@ -204,10 +322,17 @@ async function getComicInfo(url) {
 }
 
 /**
- * Extract image URLs from a chapter page
- * TopTruyen uses .reading-detail .page-chapter img
+ * Extract image URLs from a chapter page.
+ * Routes to the right adapter based on URL host.
  */
 async function getChapterImages(chapterUrl) {
+  if (isTcomicUrl(chapterUrl) || /^tcomic:/.test(chapterUrl)) {
+    return getChapterImagesTcomic(chapterUrl);
+  }
+  return getChapterImagesLegacy(chapterUrl);
+}
+
+async function getChapterImagesLegacy(chapterUrl) {
   const html = await fetchPage(chapterUrl);
   const $ = cheerio.load(html);
   console.log(`[IMAGES] HTML length: ${html.length}, looking for images...`);

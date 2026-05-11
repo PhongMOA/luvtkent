@@ -36,6 +36,10 @@
           <span class="material-icons-round">music_note</span>
           <span class="tab-text">Tập đàn</span>
         </button>
+        <button class="nav-tab" data-page="karaoke" id="tab-karaoke">
+          <span class="material-icons-round">mic</span>
+          <span class="tab-text">Karaoke</span>
+        </button>
         <button class="nav-tab" data-page="settings" id="tab-settings">
           <span class="material-icons-round">settings</span>
           <span class="tab-text">Cài đặt</span>
@@ -261,10 +265,16 @@
 
         <!-- Grid View -->
         <div id="lib-grid-view">
-          <!-- Search -->
-          <div class="lib-search">
-            <span class="material-icons-round">search</span>
-            <input type="text" id="lib-search-input" placeholder="Tìm truyện theo tên hoặc thể loại...">
+          <!-- Search + Bulk actions -->
+          <div class="lib-search-row" style="display: flex; gap: 10px; align-items: center; margin-bottom: 16px;">
+            <div class="lib-search" style="flex: 1; margin-bottom: 0;">
+              <span class="material-icons-round">search</span>
+              <input type="text" id="lib-search-input" placeholder="Tìm truyện theo tên hoặc thể loại...">
+            </div>
+            <button class="btn btn-primary" id="lib-update-all-btn" title="Quét & tải tập mới cho tất cả truyện trong thư viện">
+              <span class="material-icons-round">sync</span>
+              Cập nhật tất cả
+            </button>
           </div>
 
           <!-- Comic Grid -->
@@ -485,6 +495,121 @@
           </form>
         </div>
 
+        <!-- Tab Extractor Card -->
+        <div class="card glass-card" id="tab-extractor-card" style="margin-top: 20px;">
+          <h3 class="card-title">
+            <span class="material-icons-round">auto_fix_high</span>
+            Trích xuất Tab từ Video
+          </h3>
+          <p style="font-size: 13px; opacity: 0.7; margin: 4px 0 12px;">Tự động phát hiện và crop khuôn nhạc (tablature) từ video YouTube tutorial</p>
+
+          <div id="tab-extract-form" style="display: flex; gap: 10px; align-items: center;">
+            <input type="url" id="tab-youtube-url" class="form-input" placeholder="Dán link YouTube tutorial có tab/tablature..." style="flex: 1; padding: 10px; border-radius: 8px; border: 1px solid var(--border-color); background: var(--bg-secondary); color: var(--text-primary);">
+            <button type="button" id="tab-preview-btn" class="btn btn-secondary" style="white-space: nowrap;">
+              <span class="material-icons-round">visibility</span>
+              Xem trước
+            </button>
+            <button type="button" id="tab-extract-btn" class="btn btn-primary" style="white-space: nowrap;">
+              <span class="material-icons-round">auto_fix_high</span>
+              Auto detect
+            </button>
+          </div>
+
+          <!-- Options row -->
+          <div style="margin-top: 10px; display: flex; gap: 12px; flex-wrap: wrap;">
+            <!-- Sensitivity -->
+            <div style="display: flex; align-items: center; gap: 6px;">
+              <span class="material-icons-round" style="font-size: 16px; opacity: 0.7;">tune</span>
+              <span style="font-size: 13px; opacity: 0.7;">Độ nhạy:</span>
+              <select id="tab-sensitivity" style="padding: 4px 8px; border-radius: 6px; border: 1px solid var(--border-color); background: var(--bg-secondary); color: var(--text-primary); font-size: 13px;">
+                <option value="high">Cao (giữ nhiều tab)</option>
+                <option value="normal" selected>Trung bình</option>
+                <option value="low">Thấp (loại trùng nhiều)</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Timestamps input -->
+          <div style="margin-top: 10px;">
+            <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 6px;">
+              <span class="material-icons-round" style="font-size: 16px; opacity: 0.7;">schedule</span>
+              <span style="font-size: 13px; opacity: 0.7;">Thời điểm cần chụp (tùy chọn - để trống sẽ quét toàn bộ video)</span>
+            </div>
+            <textarea id="tab-timestamps" class="form-input" rows="2" placeholder="Nhập thời điểm, mỗi dòng hoặc cách nhau bởi dấu phẩy. VD: 0:15, 0:32, 1:05, 2:30" style="width: 100%; padding: 10px; border-radius: 8px; border: 1px solid var(--border-color); background: var(--bg-secondary); color: var(--text-primary); resize: vertical; font-family: monospace; font-size: 13px;"></textarea>
+          </div>
+
+          <!-- Preview & Region Selection -->
+          <div id="tab-preview" class="hidden" style="margin-top: 16px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+              <div>
+                <span class="material-icons-round" style="font-size: 16px; vertical-align: middle; opacity: 0.7;">crop</span>
+                <span style="font-size: 14px; font-weight: 600;" id="tab-preview-title">Chọn vùng tab</span>
+                <span style="font-size: 12px; opacity: 0.6; margin-left: 6px;">Kéo chuột để chọn vùng chứa tablature</span>
+              </div>
+              <button type="button" id="tab-crop-extract-btn" class="btn btn-primary" style="font-size: 13px;" disabled>
+                <span class="material-icons-round" style="font-size: 16px;">content_cut</span>
+                Crop & Trích xuất
+              </button>
+            </div>
+            <div id="tab-preview-container" style="position: relative; border-radius: 8px; border: 1px solid var(--border-color); overflow: hidden; cursor: crosshair; user-select: none;">
+              <img id="tab-preview-image" style="width: 100%; display: block;" alt="Preview frame">
+              <canvas id="tab-preview-canvas" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%;"></canvas>
+            </div>
+            <div id="tab-region-info" style="margin-top: 6px; font-size: 12px; opacity: 0.6; text-align: center;">
+              Click và kéo để chọn vùng tab. Có thể chọn lại nhiều lần.
+            </div>
+          </div>
+
+          <!-- Progress -->
+          <div id="tab-progress" class="hidden" style="margin-top: 16px;">
+            <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 8px;">
+              <div class="tab-spinner"></div>
+              <span id="tab-progress-text" style="font-size: 14px;">Đang xử lý...</span>
+            </div>
+            <div class="tab-progress-bar">
+              <div class="tab-progress-fill" id="tab-progress-fill"></div>
+            </div>
+          </div>
+
+          <!-- Error -->
+          <div id="tab-error" class="hidden" style="margin-top: 16px; padding: 12px; border-radius: 8px; background: rgba(239,68,68,0.1); border: 1px solid rgba(239,68,68,0.3); color: #ef4444;">
+            <span class="material-icons-round" style="font-size: 18px; vertical-align: middle;">error</span>
+            <span id="tab-error-text"></span>
+          </div>
+
+          <!-- Result -->
+          <div id="tab-result" class="hidden" style="margin-top: 16px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+              <div>
+                <span style="font-weight: 600;" id="tab-result-title"></span>
+                <span style="font-size: 13px; opacity: 0.7; margin-left: 8px;" id="tab-result-info"></span>
+              </div>
+              <div style="display: flex; gap: 8px;">
+                <button type="button" id="tab-download-btn" class="btn btn-secondary" style="font-size: 13px;">
+                  <span class="material-icons-round" style="font-size: 16px;">download</span>
+                  Tải ảnh
+                </button>
+                <button type="button" id="tab-save-btn" class="btn btn-primary" style="font-size: 13px;">
+                  <span class="material-icons-round" style="font-size: 16px;">save</span>
+                  Lưu thư viện
+                </button>
+                <button type="button" id="tab-clear-btn" class="btn btn-danger" style="font-size: 13px;">
+                  <span class="material-icons-round" style="font-size: 16px;">close</span>
+                </button>
+              </div>
+            </div>
+            <div id="tab-result-image-container" style="max-height: 500px; overflow-y: auto; border-radius: 8px; border: 1px solid var(--border-color);">
+              <img id="tab-result-image" style="width: 100%; display: block;" alt="Extracted tabs">
+            </div>
+          </div>
+
+          <!-- Dependencies warning -->
+          <div id="tab-deps-warning" class="hidden" style="margin-top: 12px; padding: 12px; border-radius: 8px; background: rgba(245,158,11,0.1); border: 1px solid rgba(245,158,11,0.3); color: #f59e0b; font-size: 13px;">
+            <span class="material-icons-round" style="font-size: 18px; vertical-align: middle;">warning</span>
+            <span id="tab-deps-text">Cần cài đặt yt-dlp và ffmpeg để sử dụng tính năng này.</span>
+          </div>
+        </div>
+
         <div class="card glass-card" style="margin-top: 20px;">
           <h3 class="card-title" style="display: flex; justify-content: space-between; align-items: center;">
             <div>
@@ -498,6 +623,86 @@
           <div class="empty-state hidden" id="music-empty" style="text-align: center; padding: 30px; opacity: 0.7;">
             <span class="material-icons-round empty-icon" style="font-size: 48px; opacity: 0.5;">library_music</span>
             <p style="margin-top: 10px;">Chưa có tài liệu tập đàn nào</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- ======================== -->
+      <!-- KARAOKE PAGE -->
+      <!-- ======================== -->
+      <section class="page" id="page-karaoke">
+        <div class="page-header">
+          <h1 class="page-title">
+            <span class="material-icons-round">mic</span>
+            Karaoke
+          </h1>
+          <p class="page-subtitle">Lưu trữ tên bài hát và lời (lyrics)</p>
+        </div>
+
+        <!-- Search from Google -->
+        <div class="card glass-card" id="karaoke-search-card">
+          <h3 class="card-title">
+            <span class="material-icons-round">search</span>
+            Tìm lời bài hát trên web
+          </h3>
+          <div class="input-group" style="margin-top: 10px;">
+            <span class="input-icon material-icons-round">music_note</span>
+            <input type="text" id="karaoke-search-input" placeholder="Nhập tên bài hát (VD: Em Của Ngày Hôm Qua)" autocomplete="off">
+            <button class="btn btn-primary" id="btn-karaoke-search" title="Tìm lời">
+              <span class="material-icons-round">travel_explore</span>
+              <span>Tìm</span>
+            </button>
+          </div>
+          <div id="karaoke-search-status" style="margin-top: 8px; font-size: 13px; color: var(--text-tertiary);"></div>
+
+          <!-- Search results list -->
+          <div id="karaoke-search-results" class="hidden" style="margin-top: 14px; display: flex; flex-direction: column; gap: 8px;"></div>
+        </div>
+
+        <!-- Add / Edit form -->
+        <div class="card glass-card" id="karaoke-add-card" style="margin-top: 20px;">
+          <h3 class="card-title">
+            <span class="material-icons-round" id="karaoke-form-icon">add_circle</span>
+            <span id="karaoke-form-title">Thêm bài hát mới</span>
+          </h3>
+          <form id="karaoke-add-form" style="display: flex; flex-direction: column; gap: 12px; margin-top: 10px;">
+            <input type="hidden" id="karaoke-edit-id">
+            <div class="input-form-group">
+              <input type="text" id="karaoke-title" class="form-input" placeholder="Tên bài hát (bắt buộc)" required style="width: 100%; padding: 10px; border-radius: 8px; border: 1px solid var(--border-color); background: var(--bg-secondary); color: var(--text-primary);">
+            </div>
+            <div class="input-form-group">
+              <input type="text" id="karaoke-artist" class="form-input" placeholder="Ca sĩ / Nghệ sĩ (tùy chọn)" style="width: 100%; padding: 10px; border-radius: 8px; border: 1px solid var(--border-color); background: var(--bg-secondary); color: var(--text-primary);">
+            </div>
+            <div class="input-form-group">
+              <textarea id="karaoke-lyrics" class="form-input" rows="10" placeholder="Lời bài hát..." required style="width: 100%; padding: 10px; border-radius: 8px; border: 1px solid var(--border-color); background: var(--bg-secondary); color: var(--text-primary); resize: vertical; line-height: 1.6; white-space: pre-wrap;"></textarea>
+            </div>
+            <div style="display: flex; gap: 8px;">
+              <button type="submit" class="btn btn-primary" style="flex: 1;">
+                <span class="material-icons-round">save</span>
+                <span id="karaoke-submit-text">Lưu bài hát</span>
+              </button>
+              <button type="button" class="btn btn-secondary hidden" id="karaoke-cancel-edit">
+                <span class="material-icons-round">close</span>
+                Hủy
+              </button>
+            </div>
+          </form>
+        </div>
+
+        <!-- List -->
+        <div class="card glass-card" style="margin-top: 20px;">
+          <h3 class="card-title">
+            <span class="material-icons-round">queue_music</span>
+            Danh sách bài hát
+          </h3>
+          <div class="lib-search" style="margin-top: 12px;">
+            <span class="material-icons-round">search</span>
+            <input type="text" id="karaoke-filter-input" placeholder="Lọc theo tên bài hoặc ca sĩ...">
+          </div>
+          <div id="karaoke-list" style="display: flex; flex-direction: column; gap: 6px; margin-top: 15px;"></div>
+          <div class="empty-state hidden" id="karaoke-empty" style="text-align: center; padding: 30px; opacity: 0.7;">
+            <span class="material-icons-round empty-icon" style="font-size: 48px; opacity: 0.5;">mic_off</span>
+            <p style="margin-top: 10px;">Chưa có bài hát karaoke nào</p>
           </div>
         </div>
       </section>
@@ -627,6 +832,30 @@
     </div>
   </div>
 
+  <!-- Karaoke Lyrics Reader Overlay -->
+  <div class="reader-overlay hidden" id="karaoke-reader-overlay" style="z-index: 1000;">
+    <div class="chord-reader-topbar">
+      <button class="reader-btn" id="karaoke-reader-close" title="Đóng (Esc)">
+        <span class="material-icons-round">close</span>
+      </button>
+      <div style="display: flex; flex-direction: column; flex: 1; min-width: 0; padding: 0 12px;">
+        <div class="chord-reader-song-title" id="karaoke-reader-title">Bài hát</div>
+        <div id="karaoke-reader-artist" style="font-size: 13px; opacity: 0.7; font-weight: 400;"></div>
+      </div>
+      <div style="display: flex; gap: 6px; align-items: center;">
+        <button class="reader-btn" id="karaoke-font-down" title="Giảm cỡ chữ">
+          <span class="material-icons-round">text_decrease</span>
+        </button>
+        <button class="reader-btn" id="karaoke-font-up" title="Tăng cỡ chữ">
+          <span class="material-icons-round">text_increase</span>
+        </button>
+      </div>
+    </div>
+    <div class="chord-reader-body" id="karaoke-reader-body">
+      <div id="karaoke-lyrics-wrapper" style="font-size: 18px; line-height: 1.8; white-space: pre-wrap; padding: 20px; max-width: 800px; margin: 0 auto;"></div>
+    </div>
+  </div>
+
   <!-- Music Chord Reader Overlay (UkuTabs-style) -->
   <div class="reader-overlay hidden" id="music-reader-overlay" style="z-index: 1000;">
     <!-- Top bar -->
@@ -731,6 +960,8 @@
   <script src="/js/comic-library.js"></script>
   <script src="/js/movie-manager.js"></script>
   <script src="/js/music-manager.js"></script>
+  <script src="/js/karaoke-manager.js"></script>
+  <script src="/js/tab-extractor.js"></script>
   <script src="/js/comic-reader.js"></script>
   <script src="/js/app.js"></script>
 </body>

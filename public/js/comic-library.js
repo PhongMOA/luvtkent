@@ -57,126 +57,202 @@ const ComicLibrary = {
     document.getElementById('lib-update-comic-btn').addEventListener('click', () => {
       if (this.selectedComic) this.updateComic(this.selectedComic);
     });
+
+    const updateAllBtn = document.getElementById('lib-update-all-btn');
+    if (updateAllBtn) {
+      updateAllBtn.addEventListener('click', () => this.updateAllComics());
+    }
   },
 
   async updateComic(comic) {
-    // Fallback: url -> sourceUrl -> id (id is usually the source URL)
-    const sourceUrl = comic.url || comic.sourceUrl || (comic.id && comic.id.startsWith('http') ? comic.id : null);
-    if (!sourceUrl) {
-      App.showToast('Truyện này không có Link tổng để cập nhật!', 'error');
-      return;
-    }
-    // Persist the resolved url back to comic for future use
-    comic.url = sourceUrl;
-
     const updateBtn = document.getElementById('lib-update-comic-btn');
     const originalText = updateBtn.innerHTML;
     updateBtn.disabled = true;
-    updateBtn.innerHTML = '<span class="material-icons-round spin">sync</span> Kiểm tra...';
 
     try {
-      // 1. Scan for new chapters
-      const scanRes = await fetch('/api/crawl/scan', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: comic.url })
-      });
-      const scanData = await scanRes.json();
-      if (!scanRes.ok) throw new Error(scanData.error || 'Scan lỗi');
-      
-      const comicInfo = scanData.data;
-      const allChapters = comicInfo.chapters || [];
-
-      // Preserve local manual edits
-      comicInfo.description = comic.description || comicInfo.description;
-      comicInfo.cover = comic.cover || comicInfo.cover;
-
-      // 2. Identify new chapters efficiently
-      const existingUrls = new Set((comic.chapters || []).map(c => c.url));
-      
-      let maxExistingNum = -1;
-      (comic.chapters || []).forEach(c => {
-         const match = (c.chapter || c.title || '').match(/[\d.,]+/);
-         if (match) maxExistingNum = Math.max(maxExistingNum, parseFloat(match[0]));
+      const result = await this._runUpdate(comic, {
+        onStage: (stage, pct) => {
+          if (stage === 'scan') {
+            updateBtn.innerHTML = '<span class="material-icons-round spin">sync</span> Kiểm tra...';
+          } else if (stage === 'download') {
+            updateBtn.innerHTML = `<span class="material-icons-round spin">sync</span> Tải... ${pct ?? 0}%`;
+          }
+        },
       });
 
-      const newChapters = allChapters.filter(ch => {
-        if (existingUrls.has(ch.url)) return false;
-        
-        const match = (ch.chapter || ch.title || '').match(/[\d.,]+/);
-        const num = match ? parseFloat(match[0]) : null;
-        
-        // Only fetch chapters with a number higher than our max, or chapters without numbers (like "Ngoại truyện")
-        if (num !== null && maxExistingNum !== -1) {
-           return num > maxExistingNum;
-        }
-        return true;
-      });
-
-      if (newChapters.length === 0) {
+      if (result.status === 'up-to-date') {
         App.showToast('Truyện đã ở tập mới nhất!', 'info');
-        updateBtn.disabled = false;
-        updateBtn.innerHTML = originalText;
-        return;
+      } else if (result.status === 'updated') {
+        App.showToast(`Đã tự động cập nhật ${result.newCount} tập mới!`, 'success');
+        this.showDetail(comic.id);
       }
+    } catch (err) {
+      App.showToast(`Lỗi: ${err.message}`, 'error');
+    } finally {
+      updateBtn.disabled = false;
+      updateBtn.innerHTML = originalText;
+    }
+  },
 
-      App.showToast(`Auto-crawl: Tìm thấy ${newChapters.length} tập mới!`, 'info');
-      updateBtn.innerHTML = '<span class="material-icons-round spin">sync</span> Tải... 0%';
+  /**
+   * Core update pipeline for a single comic. Resolves when the job is fully
+   * done (or rejects on error), so callers can await it sequentially.
+   * Returns { status: 'up-to-date' | 'updated' | 'skipped', newCount }.
+   */
+  async _runUpdate(comic, { onStage } = {}) {
+    const sourceUrl = comic.url || comic.sourceUrl || (comic.id && comic.id.startsWith('http') ? comic.id : null);
+    if (!sourceUrl) {
+      return { status: 'skipped', reason: 'no-url', newCount: 0 };
+    }
+    comic.url = sourceUrl;
 
-      // 3. Start background crawl
-      const startRes = await fetch('/api/crawl/links', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          url: comic.url,
-          chapters: newChapters.map(c => c.url),
-          comicTitle: comicInfo.title
-        })
-      });
-      const startData = await startRes.json();
-      if (!startRes.ok) throw new Error(startData.error || 'Crawl lỗi');
+    onStage?.('scan');
 
-      const jobId = startData.jobId;
+    const scanRes = await fetch('/api/crawl/scan', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: comic.url })
+    });
+    const scanData = await scanRes.json();
+    if (!scanRes.ok) throw new Error(scanData.error || 'Scan lỗi');
 
-      // 4. Poll progress gracefully
+    const comicInfo = scanData.data;
+    const allChapters = comicInfo.chapters || [];
+
+    comicInfo.description = comic.description || comicInfo.description;
+    comicInfo.cover = comic.cover || comicInfo.cover;
+
+    const existingUrls = new Set((comic.chapters || []).map(c => c.url));
+    let maxExistingNum = -1;
+    (comic.chapters || []).forEach(c => {
+      const match = (c.chapter || c.title || '').match(/[\d.,]+/);
+      if (match) maxExistingNum = Math.max(maxExistingNum, parseFloat(match[0]));
+    });
+
+    const newChapters = allChapters.filter(ch => {
+      if (existingUrls.has(ch.url)) return false;
+      const match = (ch.chapter || ch.title || '').match(/[\d.,]+/);
+      const num = match ? parseFloat(match[0]) : null;
+      if (num !== null && maxExistingNum !== -1) return num > maxExistingNum;
+      return true;
+    });
+
+    if (newChapters.length === 0) {
+      return { status: 'up-to-date', newCount: 0 };
+    }
+
+    onStage?.('download', 0);
+
+    const startRes = await fetch('/api/crawl/links', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        url: comic.url,
+        chapters: newChapters.map(c => c.url),
+        comicTitle: comicInfo.title
+      })
+    });
+    const startData = await startRes.json();
+    if (!startRes.ok) throw new Error(startData.error || 'Crawl lỗi');
+
+    const jobId = startData.jobId;
+
+    const job = await new Promise((resolve, reject) => {
       const pollInterval = setInterval(async () => {
         try {
           const statusRes = await fetch(`/api/crawl/status/${jobId}`);
-          const job = await statusRes.json();
-
-          if (job.status === 'running') {
-             const pct = job.progress.total > 0 ? Math.round((job.progress.current / job.progress.total) * 100) : 0;
-             updateBtn.innerHTML = `<span class="material-icons-round spin">sync</span> Tải... ${pct}%`;
-          } else if (job.status === 'done') {
-             clearInterval(pollInterval);
-             
-             // Merge results logic into the DB
-             await this.saveFromCrawlResults(comicInfo, job.results.chaptersData);
-             
-             // Refresh rendering!
-             this.showDetail(comic.id);
-
-             App.showToast(`Đã tự động cập nhật ${newChapters.length} tập mới!`, 'success');
-             updateBtn.disabled = false;
-             updateBtn.innerHTML = originalText;
-
-             fetch(`/api/crawl/job/${jobId}`, { method: 'DELETE' }).catch(() => {});
-          } else if (job.status === 'error') {
-             clearInterval(pollInterval);
-             App.showToast(`Lỗi: ${job.error}`, 'error');
-             updateBtn.disabled = false;
-             updateBtn.innerHTML = originalText;
+          const j = await statusRes.json();
+          if (j.status === 'running') {
+            const pct = j.progress?.total > 0
+              ? Math.round((j.progress.current / j.progress.total) * 100)
+              : 0;
+            onStage?.('download', pct);
+          } else if (j.status === 'done') {
+            clearInterval(pollInterval);
+            resolve(j);
+          } else if (j.status === 'error') {
+            clearInterval(pollInterval);
+            reject(new Error(j.error || 'Crawl lỗi'));
           }
         } catch (pollErr) {
           console.error(pollErr);
         }
       }, 1500);
+    });
 
-    } catch (err) {
-      App.showToast(`Lỗi: ${err.message}`, 'error');
-      updateBtn.disabled = false;
-      updateBtn.innerHTML = originalText;
+    await this.saveFromCrawlResults(comicInfo, job.results.chaptersData);
+    fetch(`/api/crawl/job/${jobId}`, { method: 'DELETE' }).catch(() => {});
+
+    return { status: 'updated', newCount: newChapters.length };
+  },
+
+  async updateAllComics() {
+    const btn = document.getElementById('lib-update-all-btn');
+    if (!btn || btn.disabled) return;
+
+    // Snapshot to avoid concurrent mutations from saveFromCrawlResults
+    // (which rewrites this.comics after each save).
+    const snapshot = await window.appDB.getAllComics();
+    const candidates = snapshot.filter(c =>
+      c.url || c.sourceUrl || (c.id && String(c.id).startsWith('http'))
+    );
+
+    if (candidates.length === 0) {
+      App.showToast('Thư viện chưa có truyện nào có link nguồn!', 'warning');
+      return;
     }
+
+    if (!confirm(`Quét & cập nhật tập mới cho ${candidates.length} truyện? Quá trình chạy tuần tự và có thể mất vài phút.`)) {
+      return;
+    }
+
+    const originalText = btn.innerHTML;
+    btn.disabled = true;
+
+    let updated = 0;
+    let upToDate = 0;
+    let failed = 0;
+    let totalNew = 0;
+
+    for (let i = 0; i < candidates.length; i++) {
+      const comic = candidates[i];
+      const prefix = `[${i + 1}/${candidates.length}]`;
+      btn.innerHTML = `<span class="material-icons-round spin">sync</span> ${prefix} ${this._shortTitle(comic.title)}...`;
+
+      try {
+        const result = await this._runUpdate(comic, {
+          onStage: (stage, pct) => {
+            if (stage === 'download') {
+              btn.innerHTML = `<span class="material-icons-round spin">sync</span> ${prefix} Tải ${pct ?? 0}%`;
+            }
+          },
+        });
+
+        if (result.status === 'updated') {
+          updated++;
+          totalNew += result.newCount;
+        } else if (result.status === 'up-to-date') {
+          upToDate++;
+        }
+      } catch (err) {
+        failed++;
+        console.error(`[UpdateAll] ${comic.title}:`, err);
+        App.showToast(`Lỗi "${this._shortTitle(comic.title)}": ${err.message}`, 'error');
+      }
+    }
+
+    btn.disabled = false;
+    btn.innerHTML = originalText;
+
+    App.showToast(
+      `Hoàn tất: ${updated} truyện +${totalNew} tập • ${upToDate} đã mới • ${failed} lỗi`,
+      failed > 0 ? 'warning' : 'success'
+    );
+  },
+
+  _shortTitle(title) {
+    if (!title) return '';
+    return title.length > 30 ? title.slice(0, 30) + '…' : title;
   },
 
   async loadComics() {
@@ -539,10 +615,27 @@ const ComicLibrary = {
       newChapters.forEach(ch => chapterMap.set(ch.url, ch));
 
       // Re-order based on original info from crawler
+      const usedUrls = new Set();
       mergedChapters = (comicInfo.chapters || [])
-           .map(ch => chapterMap.get(ch.url))
+           .map(ch => {
+             const m = chapterMap.get(ch.url);
+             if (m) usedUrls.add(ch.url);
+             return m;
+           })
            .filter(Boolean);
-      
+
+      // Preserve any existing/new chapters whose URL didn't appear in the
+      // latest scan (source URL scheme changes, tcomic id shift, etc.).
+      // Without this, re-ordering would silently drop all previously saved
+      // chapters when URLs no longer match.
+      const leftover = [];
+      chapterMap.forEach((ch, url) => {
+        if (!usedUrls.has(url)) leftover.push(ch);
+      });
+      if (leftover.length) {
+        mergedChapters = [...leftover, ...mergedChapters];
+      }
+
       // Fallback if comicInfo.chapters is missing
       if (mergedChapters.length === 0) {
          mergedChapters = Array.from(chapterMap.values());

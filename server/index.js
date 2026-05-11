@@ -4,9 +4,11 @@ const path = require('path');
 const fs = require('fs');
 const { getComicInfo, getChapterImages, crawlLinks, delay } = require('./crawler');
 const { downloadChapter } = require('./downloader');
+const { checkDependencies, extractTabsFromVideo, extractPreviewFrame, extractTabsWithRegion, cleanupJob, startAutoCleanup, TAB_JOBS_DIR } = require('./tab-extractor');
+const { searchGoogle: karaokeSearch, fetchLyrics: karaokeFetchLyrics } = require('./karaoke');
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 3005;
 
 // Download directory
 const DOWNLOAD_DIR = path.join(__dirname, '..', 'downloads');
@@ -18,6 +20,16 @@ if (!fs.existsSync(DOWNLOAD_DIR)) {
 app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, '..', 'public')));
+
+// Lazy-load got-scraping (ESM only) — mimics real Chrome TLS fingerprint to
+// bypass Cloudflare bot detection on datacenter IPs (Railway/Vercel).
+let gotScrapingPromise = null;
+function loadGotScraping() {
+  if (!gotScrapingPromise) {
+    gotScrapingPromise = import('got-scraping').then(m => m.gotScraping);
+  }
+  return gotScrapingPromise;
+}
 
 // ========================
 // CRAWL ENDPOINTS
@@ -341,6 +353,275 @@ app.get('/api/movies/details/:id/episodes', async (req, res) => {
 });
 
 // ========================
+// TAB EXTRACTOR ENDPOINTS
+// ========================
+
+const tabJobs = new Map();
+
+// Start auto-cleanup for old tab jobs
+startAutoCleanup();
+
+/**
+ * GET /api/tab/check
+ * Check if yt-dlp and ffmpeg are available
+ */
+app.get('/api/tab/check', async (req, res) => {
+  const deps = await checkDependencies();
+  res.json({ success: true, dependencies: deps });
+});
+
+/**
+ * POST /api/tab/preview
+ * Download video and extract a preview frame for manual region selection
+ */
+app.post('/api/tab/preview', async (req, res) => {
+  try {
+    const { url } = req.body;
+    if (!url) return res.status(400).json({ error: 'URL is required' });
+
+    if (!/youtube\.com\/watch|youtu\.be\//i.test(url)) {
+      return res.status(400).json({ error: 'Chỉ hỗ trợ URL YouTube' });
+    }
+
+    const deps = await checkDependencies();
+    if (!deps.ytdlp || !deps.ffmpeg) {
+      const missing = [];
+      if (!deps.ytdlp) missing.push('yt-dlp');
+      if (!deps.ffmpeg) missing.push('ffmpeg');
+      return res.status(503).json({ error: `Thiếu: ${missing.join(', ')}. Vui lòng cài đặt trước khi sử dụng.` });
+    }
+
+    const jobId = Date.now().toString(36) + Math.random().toString(36).substr(2, 5);
+
+    tabJobs.set(jobId, {
+      status: 'starting',
+      progress: { step: 'Khởi tạo...' },
+      videoTitle: null,
+      result: null,
+      error: null,
+    });
+
+    // Start async preview extraction
+    (async () => {
+      try {
+        const result = await extractPreviewFrame(url, jobId, (update) => {
+          const job = tabJobs.get(jobId);
+          if (job) {
+            job.status = update.status;
+            job.progress = update.progress;
+            if (update.videoTitle) job.videoTitle = update.videoTitle;
+          }
+        });
+
+        const job = tabJobs.get(jobId);
+        if (job) {
+          job.status = 'preview_ready';
+          job.videoTitle = result.videoTitle;
+          job.result = {
+            previewUrl: `/api/tab/preview-image/${jobId}`,
+            videoTitle: result.videoTitle,
+            width: result.width,
+            height: result.height,
+            duration: result.duration,
+          };
+        }
+      } catch (err) {
+        const job = tabJobs.get(jobId);
+        if (job) {
+          job.status = 'error';
+          job.error = err.message;
+        }
+      }
+    })();
+
+    res.json({ success: true, jobId });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /api/tab/preview-image/:jobId
+ * Serve the preview frame image
+ */
+app.get('/api/tab/preview-image/:jobId', (req, res) => {
+  const previewPath = path.join(TAB_JOBS_DIR, req.params.jobId, 'preview.jpg');
+  if (!fs.existsSync(previewPath)) {
+    return res.status(404).json({ error: 'Preview not found' });
+  }
+  res.set('Content-Type', 'image/jpeg');
+  res.sendFile(previewPath);
+});
+
+/**
+ * POST /api/tab/extract
+ * Start tab extraction from YouTube video
+ * Supports: auto-detect, timestamps, and manual region modes
+ */
+app.post('/api/tab/extract', async (req, res) => {
+  try {
+    const { url, timestamps, region, jobId: existingJobId, sensitivity } = req.body;
+    if (!url) return res.status(400).json({ error: 'URL is required' });
+
+    if (!/youtube\.com\/watch|youtu\.be\//i.test(url)) {
+      return res.status(400).json({ error: 'Chỉ hỗ trợ URL YouTube' });
+    }
+
+    const deps = await checkDependencies();
+    if (!deps.ytdlp || !deps.ffmpeg) {
+      const missing = [];
+      if (!deps.ytdlp) missing.push('yt-dlp');
+      if (!deps.ffmpeg) missing.push('ffmpeg');
+      return res.status(503).json({ error: `Thiếu: ${missing.join(', ')}. Vui lòng cài đặt trước khi sử dụng.` });
+    }
+
+    // Use existing jobId (from preview) or create new one
+    const jobId = existingJobId || Date.now().toString(36) + Math.random().toString(36).substr(2, 5);
+
+    const existingJob = tabJobs.get(jobId);
+    const videoTitle = existingJob?.videoTitle || null;
+
+    tabJobs.set(jobId, {
+      status: 'starting',
+      progress: { step: 'Khởi tạo...' },
+      videoTitle,
+      result: null,
+      error: null,
+    });
+
+    // Start async extraction
+    (async () => {
+      try {
+        let result;
+        const onUpdate = (update) => {
+          const job = tabJobs.get(jobId);
+          if (job) {
+            job.status = update.status;
+            job.progress = update.progress;
+            if (update.videoTitle) job.videoTitle = update.videoTitle;
+          }
+        };
+
+        if (region) {
+          // Manual region mode - crop using user-selected region
+          const opts = { videoTitle };
+          if (timestamps && Array.isArray(timestamps) && timestamps.length > 0) {
+            opts.timestamps = timestamps;
+          }
+          if (sensitivity) opts.sensitivity = sensitivity;
+          result = await extractTabsWithRegion(url, jobId, region, onUpdate, opts);
+        } else {
+          // Auto-detect mode (original behavior)
+          const opts = {};
+          if (timestamps && Array.isArray(timestamps) && timestamps.length > 0) {
+            opts.timestamps = timestamps;
+          }
+          if (sensitivity) opts.sensitivity = sensitivity;
+          result = await extractTabsFromVideo(url, jobId, onUpdate, opts);
+        }
+
+        const job = tabJobs.get(jobId);
+        if (job) {
+          job.status = 'done';
+          job.videoTitle = result.videoTitle;
+          job.result = {
+            imageUrl: `/api/tab/result/${jobId}`,
+            tabCount: result.tabCount,
+            totalFrames: result.totalFrames,
+            detectedFrames: result.detectedFrames,
+            videoTitle: result.videoTitle,
+          };
+        }
+      } catch (err) {
+        const job = tabJobs.get(jobId);
+        if (job) {
+          job.status = 'error';
+          job.error = err.message;
+        }
+      }
+    })();
+
+    res.json({ success: true, jobId });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /api/tab/status/:jobId
+ * Check extraction job progress
+ */
+app.get('/api/tab/status/:jobId', (req, res) => {
+  const job = tabJobs.get(req.params.jobId);
+  if (!job) return res.status(404).json({ error: 'Job not found' });
+  res.json(job);
+});
+
+/**
+ * GET /api/tab/result/:jobId
+ * Serve the stitched tab result image
+ */
+app.get('/api/tab/result/:jobId', (req, res) => {
+  const resultPath = path.join(TAB_JOBS_DIR, req.params.jobId, 'result.jpg');
+  if (!fs.existsSync(resultPath)) {
+    return res.status(404).json({ error: 'Result not found' });
+  }
+  res.set('Content-Type', 'image/jpeg');
+  res.set('Cache-Control', 'public, max-age=3600');
+  res.sendFile(resultPath);
+});
+
+/**
+ * DELETE /api/tab/job/:jobId
+ * Cleanup tab extraction job
+ */
+app.delete('/api/tab/job/:jobId', (req, res) => {
+  cleanupJob(req.params.jobId);
+  tabJobs.delete(req.params.jobId);
+  res.json({ success: true });
+});
+
+// ========================
+// KARAOKE ENDPOINTS
+// ========================
+
+/**
+ * GET /api/karaoke/search?q=...
+ * Tìm bài hát qua Google Search, trả về danh sách kết quả
+ */
+app.get('/api/karaoke/search', async (req, res) => {
+  try {
+    const q = req.query.q;
+    if (!q) return res.status(400).json({ error: 'Tham số q là bắt buộc' });
+
+    console.log(`[KARAOKE] Search: ${q}`);
+    const results = await karaokeSearch(q);
+    res.json({ success: true, results });
+  } catch (err) {
+    console.error('[KARAOKE] Search error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /api/karaoke/fetch-lyrics?url=...
+ * Tải URL và trích xuất lyrics
+ */
+app.get('/api/karaoke/fetch-lyrics', async (req, res) => {
+  try {
+    const url = req.query.url;
+    if (!url) return res.status(400).json({ error: 'Tham số url là bắt buộc' });
+
+    console.log(`[KARAOKE] Fetch lyrics: ${url}`);
+    const data = await karaokeFetchLyrics(url);
+    res.json({ success: true, ...data });
+  } catch (err) {
+    console.error('[KARAOKE] Fetch lyrics error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ========================
 // PROXY IMAGE ENDPOINT
 // ========================
 
@@ -353,21 +634,57 @@ app.get('/api/proxy-image', async (req, res) => {
     const { url } = req.query;
     if (!url) return res.status(400).send('URL required');
 
-    const response = await require('axios')({
-      method: 'GET',
-      url: decodeURIComponent(url),
-      responseType: 'stream',
+    const decoded = decodeURIComponent(url);
+    let referer = 'https://www.toptruyenssi.com/';
+    try {
+      const host = new URL(decoded).host;
+      if (/tcomic\.top|wasabisys\.com/i.test(host)) referer = 'https://tcomicfanq.com/';
+    } catch (_) {}
+
+    const gotScraping = await loadGotScraping();
+    const stream = gotScraping.stream({
+      url: decoded,
+      timeout: { request: 30000 },
+      retry: { limit: 0 },
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        'Referer': 'https://www.toptruyenssi.com/',
+        Referer: referer,
+        Accept: 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+      },
+      headerGeneratorOptions: {
+        browsers: [{ name: 'chrome', minVersion: 120 }],
+        devices: ['desktop'],
+        locales: ['vi-VN', 'en-US'],
+        operatingSystems: ['windows'],
       },
     });
 
-    res.set('Content-Type', response.headers['content-type']);
-    res.set('Cache-Control', 'public, max-age=86400');
-    response.data.pipe(res);
+    let headersSent = false;
+    stream.on('response', (resp) => {
+      if (headersSent) return;
+      headersSent = true;
+      if (resp.statusCode >= 400) {
+        res.status(resp.statusCode).end();
+        stream.destroy();
+        return;
+      }
+      if (resp.headers['content-type']) res.set('Content-Type', resp.headers['content-type']);
+      if (resp.headers['content-length']) res.set('Content-Length', resp.headers['content-length']);
+      res.set('Cache-Control', 'public, max-age=86400');
+    });
+
+    stream.on('error', (err) => {
+      console.error('[PROXY-IMAGE]', err.message);
+      if (!headersSent) {
+        res.status(502).send('Error proxying image');
+      } else {
+        res.end();
+      }
+    });
+
+    stream.pipe(res);
   } catch (err) {
-    res.status(500).send('Error proxying image');
+    console.error('[PROXY-IMAGE] fatal:', err.message);
+    if (!res.headersSent) res.status(500).send('Error proxying image');
   }
 });
 

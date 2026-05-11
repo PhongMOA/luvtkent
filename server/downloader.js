@@ -12,6 +12,17 @@ function sanitizeName(name) {
 /**
  * Download a single image
  */
+// Pick a sensible Referer based on the image host (CDNs usually require
+// a matching site referer to avoid 403). Falls back to the chapter URL.
+function pickReferer(imageUrl, chapterUrl) {
+  try {
+    const host = new URL(imageUrl).host;
+    if (/tcomic\.top|wasabisys\.com/i.test(host)) return 'https://tcomicfanq.com/';
+  } catch (_) {}
+  if (chapterUrl && /^https?:/i.test(chapterUrl)) return chapterUrl;
+  return 'https://www.toptruyenssi.com/';
+}
+
 async function downloadImage(url, savePath, referer) {
   const dir = path.dirname(savePath);
   if (!fs.existsSync(dir)) {
@@ -31,7 +42,7 @@ async function downloadImage(url, savePath, referer) {
       timeout: 30000,
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Referer': referer || 'https://www.toptruyenssi.com/',
+        'Referer': pickReferer(url, referer),
         'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
       },
     });

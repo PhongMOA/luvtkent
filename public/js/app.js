@@ -12,6 +12,8 @@ const App = {
     await ComicLibrary.init();
     await MovieManager.init();
     await MusicManager.init();
+    if (typeof KaraokeManager !== 'undefined') await KaraokeManager.init();
+    TabExtractor.init();
 
     // Load history
     ComicCrawler.loadHistory();

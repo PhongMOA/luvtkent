@@ -738,7 +738,19 @@ const MusicManager = {
     document.getElementById('transpose-value').textContent = '0';
     this.updateSpeedButtons();
 
-    if (mat.type === 'text') {
+    if (mat.type === 'tab-image') {
+      // Show tab image mode
+      externalBtn.style.display = mat.url ? 'flex' : 'none';
+      if (mat.url) externalBtn.href = mat.url;
+      chordBody.classList.remove('hidden');
+      iframeContent.classList.add('hidden');
+      toolbar.classList.add('hidden');
+      diagramsBar.classList.add('hidden');
+
+      chordBody.innerHTML = `<div style="text-align: center; padding: 10px;">
+        <img src="${mat.content}" alt="Tab" style="max-width: 100%; border-radius: 8px;">
+      </div>`;
+    } else if (mat.type === 'text') {
       // Show chord reader mode
       externalBtn.style.display = 'none';
       chordBody.classList.remove('hidden');
@@ -809,6 +821,7 @@ const MusicManager = {
           case 'video': return 'smart_display';
           case 'pdf': return 'picture_as_pdf';
           case 'text': return 'description';
+          case 'tab-image': return 'straighten';
           default: return 'insert_drive_file';
         }
       };
@@ -818,6 +831,7 @@ const MusicManager = {
           case 'video': return 'Video';
           case 'pdf': return 'PDF';
           case 'text': return 'Hợp âm';
+          case 'tab-image': return 'Tablature';
           default: return 'Link';
         }
       };
@@ -844,11 +858,11 @@ const MusicManager = {
           ${mat.note ? `<p style="font-size: 13px; opacity: 0.9; margin: 4px 0; background: rgba(0,0,0,0.2); padding: 8px; border-radius: 4px;">${mat.note}</p>` : ''}
           
           <div style="margin-top: auto; padding-top: 10px;">
-            ${(mat.url || mat.content) ? 
+            ${(mat.url || mat.content) ?
               `<button class="btn btn-secondary btn-sm music-open-btn" data-id="${mat.id}" style="width: 100%; justify-content: center;">
-                <span class="material-icons-round" style="font-size: 16px;">${mat.type === 'text' ? 'music_note' : 'smart_display'}</span>
-                ${mat.type === 'text' ? 'Mở Hợp âm' : 'Mở tài liệu'}
-              </button>` 
+                <span class="material-icons-round" style="font-size: 16px;">${mat.type === 'text' ? 'music_note' : mat.type === 'tab-image' ? 'straighten' : 'smart_display'}</span>
+                ${mat.type === 'text' ? 'Mở Hợp âm' : mat.type === 'tab-image' ? 'Xem Tab' : 'Mở tài liệu'}
+              </button>`
               : '<span style="font-size: 12px; color: #888; font-style: italic;">Không có nội dung/đường dẫn</span>'
             }
           </div>
