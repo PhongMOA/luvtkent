@@ -127,16 +127,53 @@ function delay(ms) {
  * Uses got-scraping which mimics real Chrome TLS fingerprint + headers
  * to bypass Cloudflare bot detection on datacenter IPs (e.g. Railway).
  */
+/**
+ * Một số domain TopTruyen chỉ phục vụ trên bản www (bản apex bị reset kết nối).
+ * Trả về biến thể đã thêm "www." để thử lại, hoặc null nếu đã có sẵn.
+ */
+function withWwwVariant(url) {
+  try {
+    const u = new URL(url);
+    if (u.hostname.startsWith('www.')) return null;
+    u.hostname = 'www.' + u.hostname;
+    return u.toString();
+  } catch (_) {
+    return null;
+  }
+}
+
+// Các domain đã biết là chỉ phục vụ trên bản www (bản apex luôn reset TLS).
+// Với những host này, đổi sang www ngay từ đầu để khỏi phí 1 lượt thử.
+const WWW_ONLY_HOST_RE = /(^|\.)toptruyen[a-z0-9-]*\.(com|net|org|vip)$/i;
+
+function preferWwwUpfront(url) {
+  try {
+    const u = new URL(url);
+    if (!u.hostname.startsWith('www.') && WWW_ONLY_HOST_RE.test(u.hostname)) {
+      return withWwwVariant(url);
+    }
+  } catch (_) {}
+  return null;
+}
+
 async function fetchPage(url, retries = 5) {
   const gotScraping = await loadGotScraping();
   let lastErr;
+  let target = url;
+  let triedWww = false;
+
+  const upfrontWww = preferWwwUpfront(target);
+  if (upfrontWww) {
+    target = upfrontWww;
+    triedWww = true;
+  }
 
   for (let i = 0; i < retries; i++) {
     try {
-      console.log(`[FETCH] Attempt ${i + 1}/${retries}: ${url.substring(0, 100)}`);
+      console.log(`[FETCH] Attempt ${i + 1}/${retries}: ${target.substring(0, 100)}`);
 
       const response = await gotScraping({
-        url,
+        url: target,
         timeout: { request: 45000 },
         retry: { limit: 0 }, // we handle retry ourselves
         headerGeneratorOptions: {
@@ -158,16 +195,33 @@ async function fetchPage(url, retries = 5) {
       lastErr = err;
       const status = err.response?.status || err.response?.statusCode;
       const code = err.code;
-      console.error(`[FETCH] Attempt ${i + 1} failed (${code || status || 'unknown'}): ${err.message}`);
+      // ECONNRESET ở bản apex là chuyện thường (site chỉ chạy www) và sẽ được
+      // tự xử lý ngay bên dưới — log nhẹ nhàng thay vì như lỗi nghiêm trọng.
+      const isRecoverableConnReset = code === 'ECONNRESET' && !triedWww && withWwwVariant(target);
+      const logLine = `[FETCH] Attempt ${i + 1} failed (${code || status || 'unknown'}): ${err.message}`;
+      if (isRecoverableConnReset) console.log(logLine);
+      else console.error(logLine);
 
       // Don't retry on 404
       if (status === 404) {
-        throw new Error(`Page not found (404): ${url}`);
+        throw new Error(`Page not found (404): ${target}`);
       }
 
       // Don't retry on other 4xx (except 403 = Cloudflare, 429 = rate limit)
       if (status && status >= 400 && status < 500 && status !== 429 && status !== 403) {
-        throw new Error(`HTTP ${status}: ${url}`);
+        throw new Error(`HTTP ${status}: ${target}`);
+      }
+
+      // Lỗi ở tầng kết nối thường là do domain apex không phục vụ — thử bản www
+      // ngay lập tức thay vì đốt hết số lần retry vào host đã chết.
+      if (!triedWww && ['ECONNRESET', 'ECONNREFUSED', 'ENOTFOUND', 'ETIMEDOUT', 'ECONNABORTED'].includes(code)) {
+        const wwwUrl = withWwwVariant(target);
+        if (wwwUrl) {
+          triedWww = true;
+          target = wwwUrl;
+          console.log(`[FETCH] Đổi sang bản www: ${target.substring(0, 100)}`);
+          continue;
+        }
       }
 
       if (i < retries - 1) {
@@ -332,6 +386,15 @@ async function getChapterImages(chapterUrl) {
   return getChapterImagesLegacy(chapterUrl);
 }
 
+/**
+ * Ảnh giao diện lẫn trong .page-chapter cần loại bỏ: logo site, banner
+ * quảng bá domain (/comics/top/topzone9.jpg), nút follow (/images/default/),
+ * avatar người đăng (images_user).
+ */
+function isJunkImage(src) {
+  return /logo|icon|\/ads?[\/.]|\/images\/default\/|\/comics\/top\/|images_user/i.test(src);
+}
+
 async function getChapterImagesLegacy(chapterUrl) {
   const html = await fetchPage(chapterUrl);
   const $ = cheerio.load(html);
@@ -339,8 +402,10 @@ async function getChapterImagesLegacy(chapterUrl) {
 
   const images = [];
 
-  // TopTruyen/NetTruyen structure: images in .reading-detail .page-chapter img
-  $('div.reading-detail div.page-chapter img, div#content_chap img, .chapter-content img').each((_, el) => {
+  // TopTruyen/NetTruyen structure: mỗi trang truyện là một .page-chapter.
+  // Bản zone9 (2026-08) đã bỏ wrapper .reading-detail nên phải khớp
+  // .page-chapter độc lập, nếu không selector cũ trả về 0 ảnh.
+  $('div.page-chapter img, div.reading-detail img, div#content_chap img, .chapter-content img').each((_, el) => {
     let src = $(el).attr('data-original') ||
       $(el).attr('data-src') ||
       $(el).attr('data-lazy-src') ||
@@ -350,14 +415,14 @@ async function getChapterImagesLegacy(chapterUrl) {
     src = src.trim();
 
     // Skip placeholder/icon images
-    if (src && !src.includes('logo') && !src.includes('icon') && !src.includes('ads')
+    if (src && !isJunkImage(src)
       && (src.includes('.jpg') || src.includes('.jpeg') || src.includes('.png') || src.includes('.webp') || src.includes('.gif')
         || src.includes('img_') || src.includes('_img') || src.includes('data='))) {
       // Ensure absolute URL
       if (src.startsWith('//')) {
         src = 'https:' + src;
       }
-      images.push(src);
+      if (!images.includes(src)) images.push(src);
     }
   });
 
@@ -375,8 +440,7 @@ async function getChapterImagesLegacy(chapterUrl) {
       src = src.trim();
 
       // Accept any image that looks like comic content
-      if (src && src.length > 20
-        && !src.includes('logo') && !src.includes('icon') && !src.includes('ads')
+      if (src && src.length > 20 && !isJunkImage(src)
         && !src.includes('avatar') && !src.includes('banner') && !src.includes('btn')
         && !src.includes('favicon') && !src.includes('google') && !src.includes('facebook')
         && (src.includes('.jpg') || src.includes('.jpeg') || src.includes('.png') || src.includes('.webp'))) {

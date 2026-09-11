@@ -6,6 +6,7 @@ const { getComicInfo, getChapterImages, crawlLinks, delay } = require('./crawler
 const { downloadChapter } = require('./downloader');
 const { checkDependencies, extractTabsFromVideo, extractPreviewFrame, extractTabsWithRegion, cleanupJob, startAutoCleanup, TAB_JOBS_DIR } = require('./tab-extractor');
 const { searchGoogle: karaokeSearch, fetchLyrics: karaokeFetchLyrics } = require('./karaoke');
+const { refererCandidates, rememberReferer } = require('./referer');
 
 const app = express();
 const PORT = process.env.PORT || 3005;
@@ -20,6 +21,12 @@ if (!fs.existsSync(DOWNLOAD_DIR)) {
 app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, '..', 'public')));
+
+// Lightweight health endpoint for client-side warm-up pings (Render free tier
+// sleeps after 15min idle; cold start can take 30s+).
+app.get('/api/health', (_req, res) => {
+  res.json({ ok: true, uptime: process.uptime() });
+});
 
 // Lazy-load got-scraping (ESM only) — mimics real Chrome TLS fingerprint to
 // bypass Cloudflare bot detection on datacenter IPs (Railway/Vercel).
@@ -258,31 +265,94 @@ app.delete('/api/crawl/job/:jobId', (req, res) => {
 });
 
 // ========================
-// MOVIE ENDPOINTS (TMDB Proxy)
+// MOVIE ENDPOINTS (OMDb Proxy)
 // ========================
+// imdbapi.dev đã ngừng hoạt động (domain NXDOMAIN từ ~7/2026), chuyển sang OMDb.
+// OMDb giữ nguyên IMDb ID dạng "tt..." nên phim đã lưu vẫn tương thích.
+// Key mặc định đã nhúng sẵn; có thể ghi đè bằng biến môi trường OMDB_API_KEY
+// (lấy miễn phí tại https://www.omdbapi.com/apikey.aspx).
+
+const OMDB_API_KEY = process.env.OMDB_API_KEY || '1e91b1c1';
+const OMDB_BASE = 'https://www.omdbapi.com/';
+
+function omdbUrl(params) {
+  const usp = new URLSearchParams({ apikey: OMDB_API_KEY, ...params });
+  return `${OMDB_BASE}?${usp.toString()}`;
+}
+
+// "N/A" -> null, đồng thời loại chuỗi rỗng
+function clean(v) {
+  return v && v !== 'N/A' ? v : null;
+}
+
+// Lấy 4 chữ số năm đầu tiên từ "2008", "2008–2015", "23 Sep 2008"...
+function firstYear(v) {
+  const m = String(v || '').match(/\d{4}/);
+  return m ? m[0] : null;
+}
+
+// Chuẩn hóa ngày phát hành về ISO "YYYY-MM-DD".
+// OMDb trả "23 Sep 2008" (chi tiết phim) hoặc "2008-09-23" (tập phim).
+function toIsoDate(v) {
+  if (!clean(v)) return null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(v)) return v;
+  const d = new Date(v);
+  if (isNaN(d)) {
+    const y = firstYear(v);
+    return y ? `${y}-01-01` : null;
+  }
+  return d.toISOString().slice(0, 10);
+}
+
+// { year, month, day } cho frontend từ ISO date
+function toReleaseParts(iso) {
+  if (!iso) return null;
+  const [year, month, day] = iso.split('-').map(Number);
+  return { year, month, day };
+}
+
+// OMDb báo lỗi (hết hạn mức, sai key, không tìm thấy...)
+function omdbError(data) {
+  const err = clean(data && data.Error);
+  if (/request limit/i.test(err || '')) {
+    return 'OMDb đã hết hạn mức request. Vui lòng đặt biến môi trường OMDB_API_KEY bằng key riêng (miễn phí tại omdbapi.com/apikey.aspx).';
+  }
+  if (/invalid api key/i.test(err || '')) {
+    return 'OMDB_API_KEY không hợp lệ. Lấy key miễn phí tại omdbapi.com/apikey.aspx.';
+  }
+  return err;
+}
 
 /**
  * GET /api/movies/search?query=...&year=...
- * Search movies via IMDB API
+ * Tìm phim qua OMDb
  */
 app.get('/api/movies/search', async (req, res) => {
   try {
     const { query, year } = req.query;
     if (!query) return res.status(400).json({ error: 'Query is required' });
 
-    // using imdbapi.dev
-    const response = await require('axios').get(
-      `https://api.imdbapi.dev/search/titles?query=${encodeURIComponent(query)}`
-    );
+    const params = { s: query, type: '' };
+    if (year) params.y = year;
 
-    // Map IMDB to TMDB-like format for frontend
-    const results = (response.data.titles || []).map(item => ({
-      id: item.id,
-      title: item.primaryTitle,
-      original_title: item.originalTitle,
-      release_date: item.startYear ? `${item.startYear}-01-01` : null,
-      poster_path: item.primaryImage?.url || null,
-      vote_average: item.rating?.aggregateRating || null,
+    const response = await require('axios').get(omdbUrl(params), { timeout: 15000 });
+    const data = response.data;
+
+    if (data.Response === 'False') {
+      // "Movie not found!" là kết quả rỗng bình thường, không phải lỗi
+      if (/not found/i.test(data.Error || '')) {
+        return res.json({ success: true, data: { results: [] } });
+      }
+      return res.status(502).json({ error: omdbError(data) || 'OMDb request failed' });
+    }
+
+    const results = (data.Search || []).map(item => ({
+      id: item.imdbID,
+      title: item.Title,
+      original_title: item.Title,
+      release_date: firstYear(item.Year) ? `${firstYear(item.Year)}-01-01` : null,
+      poster_path: clean(item.Poster),
+      vote_average: null, // OMDb không trả rating ở kết quả tìm kiếm
     }));
 
     res.json({ success: true, data: { results } });
@@ -293,26 +363,37 @@ app.get('/api/movies/search', async (req, res) => {
 
 /**
  * GET /api/movies/details/:id
- * Get movie details from IMDB API
+ * Chi tiết phim từ OMDb
  */
 app.get('/api/movies/details/:id', async (req, res) => {
   try {
     const response = await require('axios').get(
-      `https://api.imdbapi.dev/titles/${req.params.id}`
+      omdbUrl({ i: req.params.id, plot: 'full' }),
+      { timeout: 15000 }
     );
-
     const item = response.data;
+
+    if (item.Response === 'False') {
+      return res.status(502).json({ error: omdbError(item) || 'Không lấy được thông tin phim' });
+    }
+
+    const runtimeMin = parseInt(clean(item.Runtime), 10);
+    const rating = parseFloat(clean(item.imdbRating));
+    const releaseIso = toIsoDate(item.Released) ||
+      (firstYear(item.Year) ? `${firstYear(item.Year)}-01-01` : null);
+
     const movieData = {
-      id: item.id,
-      title: item.primaryTitle,
-      original_title: item.originalTitle,
-      release_date: item.startYear ? `${item.startYear}-01-01` : null,
-      poster_path: item.primaryImage?.url || null,
-      backdrop_path: item.primaryImage?.url || null,
-      overview: item.plot || 'Chưa có mô tả',
-      vote_average: item.rating?.aggregateRating || null,
-      genres: (item.genres || []).map(g => ({ name: g })),
-      runtime: item.runtimeSeconds ? Math.floor(item.runtimeSeconds / 60) : null
+      id: item.imdbID,
+      title: item.Title,
+      original_title: item.Title,
+      release_date: releaseIso,
+      poster_path: clean(item.Poster),
+      backdrop_path: clean(item.Poster),
+      overview: clean(item.Plot) || 'Chưa có mô tả',
+      vote_average: isNaN(rating) ? null : rating,
+      genres: (clean(item.Genre) || '').split(',').map(g => g.trim()).filter(Boolean).map(name => ({ name })),
+      runtime: isNaN(runtimeMin) ? null : runtimeMin,
+      total_seasons: parseInt(clean(item.totalSeasons), 10) || null,
     };
 
     res.json({ success: true, data: movieData });
@@ -323,31 +404,55 @@ app.get('/api/movies/details/:id', async (req, res) => {
 
 /**
  * GET /api/movies/details/:id/episodes
- * Get movie episodes from IMDB API
+ * Danh sách tập phim (theo từng season) từ OMDb
  */
 app.get('/api/movies/details/:id/episodes', async (req, res) => {
   try {
-    let allEpisodes = [];
-    let nextPageToken = null;
     const axios = require('axios');
-    
-    do {
-      const url = `https://api.imdbapi.dev/titles/${req.params.id}/episodes?pageSize=50` + 
-                  (nextPageToken ? `&pageToken=${nextPageToken}` : '');
-      const response = await axios.get(url);
-      
-      if (response.data && response.data.episodes) {
-        allEpisodes = allEpisodes.concat(response.data.episodes);
+    const id = req.params.id;
+
+    // Lấy tổng số season trước
+    const detailRes = await axios.get(omdbUrl({ i: id }), { timeout: 15000 });
+    const detail = detailRes.data;
+
+    if (detail.Response === 'False') {
+      return res.json({ success: true, data: { episodes: [] } });
+    }
+
+    const totalSeasons = parseInt(clean(detail.totalSeasons), 10);
+    if (!totalSeasons || detail.Type !== 'series') {
+      return res.json({ success: true, data: { episodes: [] } }); // Phim lẻ, không có tập
+    }
+
+    const seasonNumbers = Array.from({ length: totalSeasons }, (_, i) => i + 1);
+    const seasonResults = await Promise.all(
+      seasonNumbers.map(n =>
+        axios.get(omdbUrl({ i: id, Season: String(n) }), { timeout: 15000 })
+          .then(r => ({ n, data: r.data }))
+          .catch(() => ({ n, data: null }))
+      )
+    );
+
+    const allEpisodes = [];
+    for (const { n, data } of seasonResults) {
+      if (!data || data.Response === 'False' || !Array.isArray(data.Episodes)) continue;
+      for (const ep of data.Episodes) {
+        const iso = toIsoDate(ep.Released);
+        const epRating = parseFloat(clean(ep.imdbRating));
+        allEpisodes.push({
+          id: ep.imdbID,
+          season: String(n),
+          episodeNumber: parseInt(ep.Episode, 10) || 0,
+          title: ep.Title || '',
+          originalTitle: ep.Title || '',
+          releaseDate: toReleaseParts(iso),
+          rating: isNaN(epRating) ? null : { aggregateRating: epRating },
+        });
       }
-      
-      nextPageToken = response.data.nextPageToken;
-    } while (nextPageToken);
-    
+    }
+
     res.json({ success: true, data: { episodes: allEpisodes } });
   } catch (err) {
-    if (err.response && err.response.status === 404) {
-      return res.json({ success: true, data: { episodes: [] } }); // No episodes
-    }
     res.status(500).json({ error: err.message });
   }
 });
@@ -635,76 +740,91 @@ app.get('/api/proxy-image', async (req, res) => {
   if (!url) return res.status(400).send('URL required');
 
   const decoded = decodeURIComponent(url);
-  let referer = 'https://www.toptruyenssi.com/';
-  try {
-    const host = new URL(decoded).host;
-    if (/tcomic\.top|wasabisys\.com/i.test(host)) referer = 'https://tcomicfanq.com/';
-  } catch (_) {}
+  // CDN ảnh chặn hotlink theo Referer và domain nguồn đổi liên tục, nên thử
+  // lần lượt các ứng viên thay vì hardcode một domain (xem server/referer.js).
+  const candidates = refererCandidates(decoded, req.query.referer);
 
-  const headers = {
+  const baseHeaders = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
     'Accept-Language': 'vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7',
-    'Referer': referer,
     'Sec-Fetch-Dest': 'image',
     'Sec-Fetch-Mode': 'no-cors',
     'Sec-Fetch-Site': 'cross-site',
   };
 
-  try {
-    const response = await axios.get(decoded, {
-      responseType: 'stream',
-      timeout: 30000,
-      headers,
-      maxRedirects: 5,
-      validateStatus: (s) => s >= 200 && s < 400,
-    });
+  let lastStatus = null;
+  let lastMessage = '';
 
-    if (response.headers['content-type']) res.set('Content-Type', response.headers['content-type']);
-    if (response.headers['content-length']) res.set('Content-Length', response.headers['content-length']);
-    res.set('Cache-Control', 'public, max-age=86400');
+  for (const referer of candidates) {
+    try {
+      const response = await axios.get(decoded, {
+        responseType: 'stream',
+        // Giữ ngắn: khi nhiều ảnh của cùng 1 chapter bắn request đồng thời
+        // (đặc biệt trên mobile, xem comic-reader.js lazyLoadImages), một
+        // request treo 30s mỗi ứng viên Referer sẽ dồn tải/giữ kết nối lâu
+        // trên Render free tier và làm các request khác timeout theo.
+        timeout: 12000,
+        headers: { ...baseHeaders, Referer: referer },
+        maxRedirects: 5,
+        validateStatus: (s) => s >= 200 && s < 400,
+      });
 
-    response.data.on('error', (err) => {
-      console.error('[PROXY-IMAGE] stream error:', err.message);
-      if (!res.headersSent) res.status(502).end();
-      else res.end();
-    });
+      rememberReferer(decoded, referer);
 
-    response.data.pipe(res);
-  } catch (err) {
-    const status = err.response?.status;
-    console.error(`[PROXY-IMAGE] ${status || 'ERR'} ${decoded.substring(0, 100)} — ${err.message}`);
+      if (response.headers['content-type']) res.set('Content-Type', response.headers['content-type']);
+      if (response.headers['content-length']) res.set('Content-Length', response.headers['content-length']);
+      res.set('Cache-Control', 'public, max-age=86400');
 
-    // Fallback: if axios got 403/Cloudflare, try got-scraping to bypass TLS fingerprint check
-    if (status === 403 || status === 503) {
-      try {
-        const gotScraping = await loadGotScraping();
-        const resp = await gotScraping({
-          url: decoded,
-          responseType: 'buffer',
-          timeout: { request: 30000 },
-          retry: { limit: 0 },
-          headers: { Referer: referer, Accept: headers.Accept },
-          headerGeneratorOptions: {
-            browsers: [{ name: 'chrome', minVersion: 120 }],
-            devices: ['desktop'],
-            locales: ['vi-VN', 'en-US'],
-            operatingSystems: ['windows'],
-          },
-        });
-        if (resp.statusCode >= 400) {
-          return res.status(resp.statusCode).end();
-        }
-        if (resp.headers['content-type']) res.set('Content-Type', resp.headers['content-type']);
-        res.set('Cache-Control', 'public, max-age=86400');
-        return res.send(resp.body);
-      } catch (gErr) {
-        console.error('[PROXY-IMAGE] got-scraping fallback failed:', gErr.message);
-      }
+      response.data.on('error', (err) => {
+        console.error('[PROXY-IMAGE] stream error:', err.message);
+        if (!res.headersSent) res.status(502).end();
+        else res.end();
+      });
+
+      return response.data.pipe(res);
+    } catch (err) {
+      lastStatus = err.response?.status || null;
+      lastMessage = err.message;
+      // 403/503 = bị chặn hotlink hoặc Cloudflare → thử Referer kế tiếp.
+      // Lỗi khác (404, timeout...) thì đổi Referer cũng vô ích.
+      if (lastStatus !== 403 && lastStatus !== 503) break;
     }
-
-    if (!res.headersSent) res.status(status || 502).send('Error proxying image');
   }
+
+  console.error(`[PROXY-IMAGE] ${lastStatus || 'ERR'} ${decoded.substring(0, 100)} — ${lastMessage}`);
+
+  // Fallback cuối: got-scraping giả TLS fingerprint của Chrome thật, dùng khi
+  // Cloudflare chặn theo bot score chứ không phải theo Referer.
+  if (lastStatus === 403 || lastStatus === 503) {
+    try {
+      const gotScraping = await loadGotScraping();
+      const resp = await gotScraping({
+        url: decoded,
+        responseType: 'buffer',
+        timeout: { request: 30000 },
+        retry: { limit: 0 },
+        headers: { Referer: candidates[0], Accept: baseHeaders.Accept },
+        headerGeneratorOptions: {
+          browsers: [{ name: 'chrome', minVersion: 120 }],
+          devices: ['desktop'],
+          locales: ['vi-VN', 'en-US'],
+          operatingSystems: ['windows'],
+        },
+      });
+      if (resp.statusCode >= 400) {
+        return res.status(resp.statusCode).end();
+      }
+      rememberReferer(decoded, candidates[0]);
+      if (resp.headers['content-type']) res.set('Content-Type', resp.headers['content-type']);
+      res.set('Cache-Control', 'public, max-age=86400');
+      return res.send(resp.body);
+    } catch (gErr) {
+      console.error('[PROXY-IMAGE] got-scraping fallback failed:', gErr.message);
+    }
+  }
+
+  if (!res.headersSent) res.status(lastStatus || 502).send('Error proxying image');
 });
 
 // SPA fallback
@@ -723,4 +843,7 @@ app.listen(PORT, () => {
   ║  Downloads: ${DOWNLOAD_DIR.substring(0, 28).padEnd(28)}║
   ╚══════════════════════════════════════════╝
   `);
+  if (!process.env.OMDB_API_KEY) {
+    console.log('[MOVIES] Dùng OMDb key mặc định trong code. Có thể ghi đè bằng biến môi trường OMDB_API_KEY.');
+  }
 });

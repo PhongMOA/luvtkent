@@ -37,6 +37,15 @@ const ComicLibrary = {
       this.renderGrid();
     });
 
+    // Source domain filter
+    const sourceFilter = document.getElementById('lib-source-filter');
+    if (sourceFilter) {
+      sourceFilter.addEventListener('change', () => {
+        this.currentPage = 1;
+        this.renderGrid();
+      });
+    }
+
     // Detail view action buttons
     document.getElementById('lib-detail-read-first').addEventListener('click', () => {
       if (!this.selectedComic || !this.selectedComic.chapters?.length) return;
@@ -62,6 +71,225 @@ const ComicLibrary = {
     if (updateAllBtn) {
       updateAllBtn.addEventListener('click', () => this.updateAllComics());
     }
+
+    const dedupeBtn = document.getElementById('lib-dedupe-btn');
+    if (dedupeBtn) {
+      dedupeBtn.addEventListener('click', () => this.dedupeLibrary());
+    }
+  },
+
+  // Title normalization key — shared by manual dedupe + auto-dedupe so that
+  // both paths group records the same way.
+  _normTitle(s) {
+    return (s || '').toLowerCase().trim().replace(/\s+/g, ' ');
+  },
+
+  // Extract the leading numeric portion of a chapter label ("Chapter 12.5" → 12.5).
+  _chapterNum(ch) {
+    if (!ch || !ch.chapter) return -1;
+    const m = String(ch.chapter).match(/[\d.,]+/);
+    return m ? parseFloat(m[0].replace(',', '.')) : -1;
+  },
+
+  // Merge a single group of same-title comics into one record and delete the
+  // losers. Chapters are deduped by chapter NUMBER (URLs differ across domain
+  // rewrites, so URL-based dedup over-counts). Inherits isStarred /
+  // autoDeleteOldChapters from any duplicate, remaps lastReadChapter to the
+  // merged array, and preserves the earliest savedAt.
+  //
+  // `preferredWinnerId` (optional): when set and present in the group, that
+  // record wins regardless of chapter count. Used by the auto-dedupe path to
+  // force the just-saved (live-domain) record to win even if an older record
+  // happened to have more chapters cached.
+  async _mergeGroup(group, { preferredWinnerId } = {}) {
+    if (!group || group.length < 2) {
+      return { winnerId: group?.[0]?.id, extraChapters: 0, deletedIds: [] };
+    }
+
+    // Pick winner.
+    let winner;
+    if (preferredWinnerId) {
+      winner = group.find(c => c.id === preferredWinnerId);
+    }
+    if (!winner) {
+      const sorted = [...group].sort((a, b) => {
+        const lenDiff = (b.chapters?.length || 0) - (a.chapters?.length || 0);
+        if (lenDiff !== 0) return lenDiff;
+        return new Date(b.savedAt || 0) - new Date(a.savedAt || 0);
+      });
+      winner = sorted[0];
+    }
+    const losers = group.filter(c => c.id !== winner.id);
+
+    // Deepest read progress across the group, by chapter number.
+    let bestRead = null;
+    for (const c of group) {
+      if (c.lastReadChapter !== undefined && c.chapters?.[c.lastReadChapter]) {
+        const ch = c.chapters[c.lastReadChapter];
+        const num = this._chapterNum(ch);
+        if (!bestRead || num > bestRead.num) {
+          bestRead = { num, url: ch.url, at: c.lastReadAt };
+        }
+      }
+    }
+
+    // Dedupe loser chapters into winner by chapter number.
+    const winnerNums = new Set();
+    (winner.chapters || []).forEach(ch => {
+      const n = this._chapterNum(ch);
+      if (n >= 0) winnerNums.add(n);
+    });
+    const extras = [];
+    for (const loser of losers) {
+      for (const ch of loser.chapters || []) {
+        const n = this._chapterNum(ch);
+        if (n >= 0 && !winnerNums.has(n)) {
+          extras.push(ch);
+          winnerNums.add(n);
+        }
+      }
+    }
+    const mergedChapters = [...(winner.chapters || []), ...extras];
+
+    // Remap lastReadChapter into merged array.
+    let newLastRead;
+    let newLastReadAt;
+    if (bestRead) {
+      let idx = mergedChapters.findIndex(c => c.url === bestRead.url);
+      if (idx === -1 && bestRead.num >= 0) {
+        let bestDiff = Infinity;
+        for (let i = 0; i < mergedChapters.length; i++) {
+          const n = this._chapterNum(mergedChapters[i]);
+          if (n < 0) continue;
+          const d = Math.abs(n - bestRead.num);
+          if (d < bestDiff) { bestDiff = d; idx = i; }
+        }
+      }
+      if (idx !== -1) {
+        newLastRead = idx;
+        newLastReadAt = bestRead.at;
+      }
+    }
+
+    const allSavedAt = group.map(c => c.savedAt).filter(Boolean).sort();
+
+    const merged = {
+      ...winner,
+      chapters: mergedChapters,
+      isStarred: group.some(c => c.isStarred),
+      autoDeleteOldChapters: group.some(c => c.autoDeleteOldChapters),
+      lastReadChapter: newLastRead,
+      lastReadAt: newLastReadAt,
+      savedAt: allSavedAt[0] || winner.savedAt,
+    };
+
+    await window.appDB.saveComic(merged);
+
+    const deletedIds = [];
+    for (const loser of losers) {
+      try {
+        await window.appDB.deleteComic(loser.id);
+        deletedIds.push(loser.id);
+      } catch (err) {
+        console.warn(`[MergeGroup] xóa thất bại ${loser.id}:`, err);
+      }
+    }
+
+    return { winnerId: merged.id, extraChapters: extras.length, deletedIds };
+  },
+
+  // Called automatically after every saveFromCrawlResults — catches the
+  // cross-domain duplicate case so user doesn't have to manually run Dọn
+  // trùng lặp. Forces the just-saved record to win so its (working) URL
+  // remains the canonical source for future updates.
+  async _autoDedupeByTitle(title, preferredWinnerId) {
+    const key = this._normTitle(title);
+    if (!key) return null;
+    const all = await window.appDB.getAllComics();
+    const group = all.filter(c => this._normTitle(c.title) === key);
+    if (group.length <= 1) return null;
+    const result = await this._mergeGroup(group, { preferredWinnerId });
+    if (result.deletedIds.length > 0) {
+      console.log(
+        `[AutoDedupe] "${title}": gộp ${result.deletedIds.length} bản trùng, +${result.extraChapters} chapter`
+      );
+      App.showToast(
+        `Tự động gộp ${result.deletedIds.length} bản trùng tên cũ (+${result.extraChapters} chapter)`,
+        'info'
+      );
+    }
+    return result;
+  },
+
+  // Scan the library for comics sharing a normalized title and merge each
+  // duplicate group into a single record.
+  async dedupeLibrary() {
+    const btn = document.getElementById('lib-dedupe-btn');
+    if (btn?.disabled) return;
+
+    const all = await window.appDB.getAllComics();
+    const groups = new Map();
+    for (const c of all) {
+      const key = this._normTitle(c.title);
+      if (!key) continue;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(c);
+    }
+
+    const dupGroups = Array.from(groups.values()).filter(g => g.length > 1);
+    if (dupGroups.length === 0) {
+      App.showToast('Không tìm thấy truyện trùng tên.', 'info');
+      return;
+    }
+
+    const totalToDelete = dupGroups.reduce((s, g) => s + (g.length - 1), 0);
+    const preview = dupGroups.slice(0, 5).map(g => {
+      const title = g[0].title;
+      const counts = g.map(c => c.chapters?.length || 0).sort((a, b) => b - a).join('/');
+      return `• ${title} (${counts} ch)`;
+    }).join('\n');
+    const more = dupGroups.length > 5 ? `\n…và ${dupGroups.length - 5} nhóm khác` : '';
+
+    if (!confirm(
+      `Phát hiện ${dupGroups.length} nhóm trùng tên (sẽ xóa ${totalToDelete} bản dư).\n\n` +
+      `${preview}${more}\n\n` +
+      `Bản giữ lại sẽ kế thừa sao + tiến độ đọc cao nhất, và bổ sung chapter từ các bản kia. Tiếp tục?`
+    )) {
+      return;
+    }
+
+    const originalText = btn ? btn.innerHTML : '';
+    if (btn) {
+      btn.disabled = true;
+      btn.innerHTML = '<span class="material-icons-round spin">cleaning_services</span> Đang gộp...';
+    }
+
+    let mergedCount = 0;
+    let deletedCount = 0;
+    let extraChaptersAdded = 0;
+
+    try {
+      for (const group of dupGroups) {
+        const result = await this._mergeGroup(group);
+        mergedCount++;
+        deletedCount += result.deletedIds.length;
+        extraChaptersAdded += result.extraChapters;
+      }
+
+      await this.loadComics();
+      App.showToast(
+        `Đã gộp ${mergedCount} nhóm • xóa ${deletedCount} bản dư • bổ sung ${extraChaptersAdded} chapter`,
+        'success'
+      );
+    } catch (err) {
+      console.error('[Dedupe] lỗi:', err);
+      App.showToast(`Lỗi dọn trùng lặp: ${err.message}`, 'error');
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        btn.innerHTML = originalText;
+      }
+    }
   },
 
   async updateComic(comic) {
@@ -70,6 +298,16 @@ const ComicLibrary = {
     updateBtn.disabled = true;
 
     try {
+      updateBtn.innerHTML = '<span class="material-icons-round spin">sync</span> Kết nối server...';
+      const ready = await App.ensureServerReady({
+        onProgress: (n) => {
+          updateBtn.innerHTML = `<span class="material-icons-round spin">sync</span> Đang đánh thức server… (${n})`;
+        },
+      });
+      if (!ready) {
+        throw new Error('Server không phản hồi. Render free tier có thể đang ngủ — thử lại sau 30s.');
+      }
+
       const result = await this._runUpdate(comic, {
         onStage: (stage, pct) => {
           if (stage === 'scan') {
@@ -94,21 +332,50 @@ const ComicLibrary = {
     }
   },
 
+  // Retry fetch on TypeError (network failure / "Failed to fetch"). HTTP
+  // errors (4xx/5xx) come back as a normal Response and are NOT retried —
+  // those are handled by the caller via res.ok.
+  async _fetchWithRetry(url, options, { retries = 2, retryDelayMs = 2000 } = {}) {
+    let lastErr;
+    for (let i = 0; i <= retries; i++) {
+      try {
+        return await fetch(url, options);
+      } catch (err) {
+        lastErr = err;
+        if (!(err instanceof TypeError)) throw err;
+        if (i < retries) {
+          await new Promise(r => setTimeout(r, retryDelayMs * (i + 1)));
+        }
+      }
+    }
+    throw new Error(`Không kết nối được server (${lastErr?.message || 'Failed to fetch'})`);
+  },
+
   /**
    * Core update pipeline for a single comic. Resolves when the job is fully
    * done (or rejects on error), so callers can await it sequentially.
    * Returns { status: 'up-to-date' | 'updated' | 'skipped', newCount }.
    */
   async _runUpdate(comic, { onStage } = {}) {
-    const sourceUrl = comic.url || comic.sourceUrl || (comic.id && comic.id.startsWith('http') ? comic.id : null);
+    let sourceUrl = comic.url || comic.sourceUrl || (comic.id && comic.id.startsWith('http') ? comic.id : null);
     if (!sourceUrl) {
       return { status: 'skipped', reason: 'no-url', newCount: 0 };
+    }
+
+    // Apply domain map (settings) so dead/old hosts are rewritten before scan.
+    // If the URL actually changed, migrate the stored record (id, url,
+    // chapter urls) before scanning so saveFromCrawlResults finds the
+    // existing entry under its new id.
+    const rewritten = AppConfig.applyDomainMap(sourceUrl);
+    if (rewritten !== sourceUrl) {
+      await this._migrateComicDomain(comic, rewritten);
+      sourceUrl = rewritten;
     }
     comic.url = sourceUrl;
 
     onStage?.('scan');
 
-    const scanRes = await fetch('/api/crawl/scan', {
+    const scanRes = await this._fetchWithRetry('/api/crawl/scan', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ url: comic.url })
@@ -143,7 +410,7 @@ const ComicLibrary = {
 
     onStage?.('download', 0);
 
-    const startRes = await fetch('/api/crawl/links', {
+    const startRes = await this._fetchWithRetry('/api/crawl/links', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -209,6 +476,19 @@ const ComicLibrary = {
     const originalText = btn.innerHTML;
     btn.disabled = true;
 
+    btn.innerHTML = '<span class="material-icons-round spin">sync</span> Kết nối server...';
+    const ready = await App.ensureServerReady({
+      onProgress: (n) => {
+        btn.innerHTML = `<span class="material-icons-round spin">sync</span> Đang đánh thức server… (${n})`;
+      },
+    });
+    if (!ready) {
+      btn.disabled = false;
+      btn.innerHTML = originalText;
+      App.showToast('Server không phản hồi. Render free tier có thể đang ngủ — thử lại sau 30s.', 'error');
+      return;
+    }
+
     let updated = 0;
     let upToDate = 0;
     let failed = 0;
@@ -255,10 +535,97 @@ const ComicLibrary = {
     return title.length > 30 ? title.slice(0, 30) + '…' : title;
   },
 
+  /**
+   * Rewrite a single comic's id/url/chapter urls to the new domain and
+   * persist (delete old id record, save under new id). Mutates `comic`.
+   * Returns the number of chapter urls that were changed.
+   */
+  async _migrateComicDomain(comic, newUrl) {
+    const oldId = comic.id;
+    let chaptersChanged = 0;
+    if (Array.isArray(comic.chapters)) {
+      comic.chapters = comic.chapters.map(ch => {
+        if (!ch || !ch.url) return ch;
+        const newChUrl = AppConfig.applyDomainMap(ch.url);
+        if (newChUrl !== ch.url) chaptersChanged++;
+        return { ...ch, url: newChUrl };
+      });
+    }
+    comic.url = newUrl;
+    comic.id = newUrl;
+
+    // If id actually changed, delete the old record so we don't keep a
+    // dangling duplicate keyed by the dead URL.
+    if (oldId && oldId !== newUrl) {
+      try { await window.appDB.deleteComic(oldId); } catch (_) {}
+    }
+    await window.appDB.saveComic(comic);
+    return chaptersChanged;
+  },
+
+  /**
+   * Scan all comics in the library and apply the currently-configured
+   * domain map to each one. Used by the "Áp dụng cho thư viện" button.
+   */
+  async migrateAllDomains() {
+    const all = await window.appDB.getAllComics();
+    let scanned = 0;
+    let updated = 0;
+    let chaptersUpdated = 0;
+    for (const comic of all) {
+      scanned++;
+      const sourceUrl = comic.url || (comic.id && String(comic.id).startsWith('http') ? comic.id : null);
+      if (!sourceUrl) continue;
+      const newUrl = AppConfig.applyDomainMap(sourceUrl);
+      const anyChapterChange = (comic.chapters || []).some(ch =>
+        ch && ch.url && AppConfig.applyDomainMap(ch.url) !== ch.url
+      );
+      if (newUrl === sourceUrl && !anyChapterChange) continue;
+      const chCount = await this._migrateComicDomain(comic, newUrl);
+      updated++;
+      chaptersUpdated += chCount;
+    }
+    return { scanned, updated, chaptersUpdated };
+  },
+
   async loadComics() {
     this.comics = await window.appDB.getAllComics();
+    // Tự gộp các bản trùng tên còn sót (vd: thiết bị chưa từng re-crawl sau
+    // khi đổi domain nguồn nên auto-dedupe lúc save chưa chạy cho chúng).
+    // Idempotent + silent: không có nhóm trùng thì không làm gì.
+    if (await this._dedupeAllSilent(this.comics)) {
+      this.comics = await window.appDB.getAllComics();
+    }
     this.renderGrid();
     this.updateStats();
+  },
+
+  // Quét toàn thư viện, gộp mọi nhóm trùng tên chuẩn hóa thành một bản.
+  // Trả về true nếu có xóa bản dư (để caller reload). Không hỏi xác nhận,
+  // không hiện toast — đây là đường tự dọn nền khi mở thư viện.
+  async _dedupeAllSilent(all) {
+    const groups = new Map();
+    for (const c of all) {
+      const key = this._normTitle(c.title);
+      if (!key) continue;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(c);
+    }
+    const dupGroups = Array.from(groups.values()).filter(g => g.length > 1);
+    if (dupGroups.length === 0) return false;
+    let deleted = 0;
+    for (const group of dupGroups) {
+      try {
+        const r = await this._mergeGroup(group);
+        deleted += r.deletedIds.length;
+      } catch (err) {
+        console.warn('[AutoDedupe] bỏ qua nhóm lỗi:', err);
+      }
+    }
+    if (deleted > 0) {
+      console.log(`[AutoDedupe] tự gộp ${deleted} bản trùng khi load thư viện`);
+    }
+    return deleted > 0;
   },
 
   updateStats() {
@@ -272,14 +639,56 @@ const ComicLibrary = {
     document.getElementById('lib-stat-images').textContent = totalImages;
   },
 
+  _getComicHost(comic) {
+    const url = comic?.url || (comic?.id && String(comic.id).startsWith('http') ? comic.id : '');
+    if (!url) return '';
+    try { return new URL(url).host.toLowerCase(); } catch (_) { return ''; }
+  },
+
+  renderSourceFilter() {
+    const select = document.getElementById('lib-source-filter');
+    if (!select) return;
+    const counts = new Map();
+    this.comics.forEach(c => {
+      const host = this._getComicHost(c);
+      const key = host || '__none__';
+      counts.set(key, (counts.get(key) || 0) + 1);
+    });
+    const entries = Array.from(counts.entries()).sort((a, b) => {
+      if (a[0] === '__none__') return 1;
+      if (b[0] === '__none__') return -1;
+      return a[0].localeCompare(b[0]);
+    });
+    const current = select.value;
+    const total = this.comics.length;
+    let html = `<option value="">Tất cả nguồn (${total})</option>`;
+    for (const [host, count] of entries) {
+      const label = host === '__none__' ? '(Không có nguồn)' : host;
+      html += `<option value="${host}">${label} (${count})</option>`;
+    }
+    select.innerHTML = html;
+    // Preserve selection if still valid
+    if (current && Array.from(select.options).some(o => o.value === current)) {
+      select.value = current;
+    }
+  },
+
   getFilteredComics() {
     const search = document.getElementById('lib-search-input').value.trim().toLowerCase();
+    const sourceFilter = document.getElementById('lib-source-filter')?.value || '';
     let filtered = this.comics;
     if (search) {
-      filtered = this.comics.filter(c =>
+      filtered = filtered.filter(c =>
         c.title.toLowerCase().includes(search) ||
         (c.genres || []).some(g => g.toLowerCase().includes(search))
       );
+    }
+    if (sourceFilter) {
+      filtered = filtered.filter(c => {
+        const host = this._getComicHost(c);
+        if (sourceFilter === '__none__') return !host;
+        return host === sourceFilter;
+      });
     }
     return filtered.sort((a, b) => {
       if (a.isStarred && !b.isStarred) return -1;
@@ -289,6 +698,7 @@ const ComicLibrary = {
   },
 
   renderGrid() {
+    this.renderSourceFilter();
     const filtered = this.getFilteredComics();
     const totalPages = Math.max(1, Math.ceil(filtered.length / this.pageSize));
     this.currentPage = Math.min(this.currentPage, totalPages);
@@ -472,6 +882,37 @@ const ComicLibrary = {
     // Saved date
     document.getElementById('lib-detail-date').textContent = `Lưu: ${new Date(comic.savedAt).toLocaleDateString('vi-VN')}`;
 
+    // Source domain — show host of the saved url so user can spot dead
+    // domains and trigger replacements from Settings.
+    const sourceEl = document.getElementById('lib-detail-source');
+    const sourceUrl = comic.url || (comic.id && String(comic.id).startsWith('http') ? comic.id : '');
+    if (sourceUrl) {
+      let host = '';
+      try { host = new URL(sourceUrl).host; } catch (_) { host = sourceUrl; }
+      sourceEl.innerHTML = `
+        <span class="material-icons-round" style="font-size:16px; opacity:0.7;">link</span>
+        <span>Nguồn:</span>
+        <a href="${sourceUrl}" target="_blank" rel="noopener noreferrer"
+           style="color: var(--accent, #8b5cf6); text-decoration: none; font-weight: 500;">${host}</a>
+        <button id="lib-detail-copy-url" title="Sao chép URL"
+          style="background:none; border:none; color: var(--text-tertiary); cursor:pointer; padding:2px; display:inline-flex; align-items:center;">
+          <span class="material-icons-round" style="font-size:16px;">content_copy</span>
+        </button>
+      `;
+      const copyBtn = sourceEl.querySelector('#lib-detail-copy-url');
+      copyBtn?.addEventListener('click', async (e) => {
+        e.preventDefault();
+        try {
+          await navigator.clipboard.writeText(sourceUrl);
+          App.showToast('Đã sao chép URL nguồn', 'success');
+        } catch (_) {
+          App.showToast('Không sao chép được', 'error');
+        }
+      });
+    } else {
+      sourceEl.innerHTML = `<span style="opacity:0.6;">Không có URL nguồn</span>`;
+    }
+
     // Read actions text
     const lastReadText = document.getElementById('lib-detail-last-read');
     if (comic.lastReadChapter !== undefined && comic.chapters[comic.lastReadChapter]) {
@@ -597,6 +1038,20 @@ const ComicLibrary = {
 
   // Called from ComicCrawler after crawl completes
   async saveFromCrawlResults(comicInfo, chaptersData) {
+    // Nguồn (kể cả site mirror) thường trả về link domain CŨ trong HTML dù ta
+    // scan bằng domain mới. Áp lại domain map lên toàn bộ URL trả về để phép
+    // "đổi nguồn" trong Settings có tính "dính" — nếu không, mỗi lần cập nhật
+    // truyện sẽ bị quay về link cũ.
+    comicInfo = { ...comicInfo, url: AppConfig.applyDomainMap(comicInfo.url) };
+    if (Array.isArray(comicInfo.chapters)) {
+      comicInfo.chapters = comicInfo.chapters.map(ch =>
+        ch && ch.url ? { ...ch, url: AppConfig.applyDomainMap(ch.url) } : ch
+      );
+    }
+    chaptersData = (chaptersData || []).map(ch =>
+      ch && ch.url ? { ...ch, url: AppConfig.applyDomainMap(ch.url) } : ch
+    );
+
     const id = comicInfo.url || `comic_${Date.now()}`;
     const newChapters = chaptersData.filter(ch => ch.images && ch.images.length > 0);
 
@@ -685,6 +1140,17 @@ const ComicLibrary = {
     };
 
     await window.appDB.saveComic(comic);
+
+    // Auto-dedupe by normalized title — catches the cross-domain duplicate
+    // case (same comic crawled from old + new domain creates two records with
+    // different ids). The just-saved record wins so its (live) URL stays the
+    // canonical source for future updates.
+    try {
+      await this._autoDedupeByTitle(comic.title, comic.id);
+    } catch (err) {
+      console.warn('[AutoDedupe] bỏ qua lỗi:', err);
+    }
+
     await this.loadComics();
     App.showToast(`Đã lưu "${comic.title}" vào thư viện`, 'success');
   },

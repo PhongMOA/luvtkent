@@ -155,32 +155,82 @@ const ComicReader = {
   lazyLoadImages(container) {
     const images = container.querySelectorAll('.reader-img[data-src]');
 
+    // Trên điện thoại, ảnh hiển thị hẹp hơn (width:100%, max-width:800px) nên
+    // thấp hơn nhiều so với desktop → cùng rootMargin 500px "trúng" nhiều ảnh
+    // hơn hẳn, khiến rất nhiều request /api/proxy-image bắn đồng thời và dồn
+    // tải lên server (đặc biệt Render free tier), dẫn tới timeout hàng loạt.
+    // Giới hạn số ảnh tải cùng lúc + tự động thử lại để chịu được việc đó.
+    const MAX_CONCURRENT = 3;
+    const MAX_RETRIES = 3;
+    const RETRY_DELAY_MS = 1500;
+    let active = 0;
+    const queue = [];
+
+    const runNext = () => {
+      while (active < MAX_CONCURRENT && queue.length) {
+        loadImage(queue.shift());
+      }
+    };
+
+    const loadImage = (img) => {
+      const baseSrc = img.dataset.src || img._baseSrc;
+      if (!baseSrc) return;
+      img._baseSrc = baseSrc;
+      const attempt = img._retryCount || 0;
+
+      active++;
+      img.style.minHeight = '200px';
+      img.style.background = 'rgba(139, 92, 246, 0.1)';
+      img.classList.remove('error');
+      img.style.cursor = '';
+      img.onclick = null;
+
+      img.onload = () => {
+        img.style.minHeight = '';
+        img.style.background = '';
+        img.classList.add('loaded');
+        active--;
+        runNext();
+      };
+
+      img.onerror = () => {
+        active--;
+        if (attempt < MAX_RETRIES) {
+          img._retryCount = attempt + 1;
+          setTimeout(() => {
+            queue.push(img);
+            runNext();
+          }, RETRY_DELAY_MS * img._retryCount);
+          return;
+        }
+        img.style.minHeight = '60px';
+        img.style.background = 'rgba(239, 68, 68, 0.1)';
+        const pageNum = img.alt.replace(/^⚠ Không tải được /, '').replace('Trang ', '').replace(/ \(chạm để thử lại\)$/, '');
+        img.alt = `⚠ Không tải được trang ${pageNum} (chạm để thử lại)`;
+        img.classList.add('error');
+        img.style.cursor = 'pointer';
+        img.onclick = () => {
+          img._retryCount = 0;
+          queue.push(img);
+          runNext();
+        };
+        runNext();
+      };
+
+      // Cache-bust trên các lần thử lại để tránh CDN/trình duyệt trả lại
+      // response lỗi đã cache theo đúng URL cũ.
+      img.src = attempt > 0
+        ? baseSrc + (baseSrc.includes('?') ? '&' : '?') + '_retry=' + attempt
+        : baseSrc;
+      img.removeAttribute('data-src');
+    };
+
     const observer = new IntersectionObserver((entries) => {
       entries.forEach(entry => {
         if (entry.isIntersecting) {
-          const img = entry.target;
-          const src = img.dataset.src;
-
-          // Create a loading indicator
-          img.style.minHeight = '200px';
-          img.style.background = 'rgba(139, 92, 246, 0.1)';
-
-          img.onload = () => {
-            img.style.minHeight = '';
-            img.style.background = '';
-            img.classList.add('loaded');
-          };
-
-          img.onerror = () => {
-            img.style.minHeight = '60px';
-            img.style.background = 'rgba(239, 68, 68, 0.1)';
-            img.alt = `⚠ Không tải được trang ${img.alt.replace('Trang ', '')}`;
-            img.classList.add('error');
-          };
-
-          img.src = src;
-          img.removeAttribute('data-src');
-          observer.unobserve(img);
+          queue.push(entry.target);
+          observer.unobserve(entry.target);
+          runNext();
         }
       });
     }, {

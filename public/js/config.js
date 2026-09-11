@@ -5,7 +5,7 @@
  */
 const AppConfig = {
   // App Version - update this when releasing new versions
-  APP_VERSION: '1.1.1',
+  APP_VERSION: '1.1.2',
   
   // GitHub repo for update checking
   GITHUB_REPO: 'PhongMOA/luvtkent',
@@ -38,6 +38,60 @@ const AppConfig = {
   // Build full API URL
   api(path) {
     return this.getApiBase() + path;
+  },
+
+  // ===== Domain Replacements =====
+  // In-memory cache of { from, to } pairs. App.loadSettings() populates this
+  // from IndexedDB at startup; UI handlers in app.js mutate it via setDomainMap.
+  _domainMap: [],
+
+  setDomainMap(pairs) {
+    // `from` chấp nhận cả chuỗi (định dạng cũ) lẫn mảng (multi-select mới) và
+    // luôn được chuẩn hóa thành mảng domain đã trim + lowercase, bỏ rỗng/trùng.
+    const normFrom = (f) => {
+      const arr = Array.isArray(f) ? f : [f];
+      const out = [];
+      for (const x of arr) {
+        const s = String(x || '').trim().toLowerCase();
+        if (s && !out.includes(s)) out.push(s);
+      }
+      return out;
+    };
+    this._domainMap = Array.isArray(pairs)
+      ? pairs.filter(p => p && typeof p === 'object').map(p => ({
+          from: normFrom(p.from),
+          to: String(p.to || '').trim().toLowerCase(),
+        }))
+      : [];
+  },
+
+  getDomainMap() {
+    return this._domainMap.slice();
+  },
+
+  // Rewrite a URL's host if it matches a mapping. Matches host suffix so
+  // entries like "toptruyenzone.com" also catch "www.toptruyenzone.com".
+  applyDomainMap(url) {
+    if (!url || typeof url !== 'string' || !url.startsWith('http')) return url;
+    if (!this._domainMap.length) return url;
+    try {
+      const u = new URL(url);
+      const host = u.host.toLowerCase();
+      for (const { from, to } of this._domainMap) {
+        if (!to) continue;
+        const froms = Array.isArray(from) ? from : (from ? [from] : []);
+        for (const f of froms) {
+          if (!f) continue;
+          if (host === f || host.endsWith('.' + f)) {
+            // Preserve subdomain prefix if any
+            const prefix = host === f ? '' : host.slice(0, host.length - f.length);
+            u.host = prefix + to;
+            return u.toString();
+          }
+        }
+      }
+    } catch (_) {}
+    return url;
   },
 
   // Rewrite any URL that starts with /api/ to use the correct base

@@ -1,6 +1,7 @@
 const axios = require('axios');
 const fs = require('fs');
 const path = require('path');
+const { refererCandidates, rememberReferer } = require('./referer');
 
 /**
  * Sanitize folder/file name
@@ -12,17 +13,6 @@ function sanitizeName(name) {
 /**
  * Download a single image
  */
-// Pick a sensible Referer based on the image host (CDNs usually require
-// a matching site referer to avoid 403). Falls back to the chapter URL.
-function pickReferer(imageUrl, chapterUrl) {
-  try {
-    const host = new URL(imageUrl).host;
-    if (/tcomic\.top|wasabisys\.com/i.test(host)) return 'https://tcomicfanq.com/';
-  } catch (_) {}
-  if (chapterUrl && /^https?:/i.test(chapterUrl)) return chapterUrl;
-  return 'https://www.toptruyenssi.com/';
-}
-
 async function downloadImage(url, savePath, referer) {
   const dir = path.dirname(savePath);
   if (!fs.existsSync(dir)) {
@@ -34,29 +24,42 @@ async function downloadImage(url, savePath, referer) {
     return { success: true, skipped: true, path: savePath };
   }
 
-  try {
-    const response = await axios({
-      method: 'GET',
-      url: url,
-      responseType: 'stream',
-      timeout: 30000,
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Referer': pickReferer(url, referer),
-        'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
-      },
-    });
+  // CDN chặn hotlink theo Referer nên thử lần lượt các ứng viên (xem server/referer.js).
+  const candidates = refererCandidates(url, referer);
+  let lastError = 'Không tải được ảnh';
 
-    const writer = fs.createWriteStream(savePath);
-    response.data.pipe(writer);
+  for (const ref of candidates) {
+    try {
+      const response = await axios({
+        method: 'GET',
+        url: url,
+        responseType: 'stream',
+        timeout: 30000,
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Referer': ref,
+          'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+        },
+      });
 
-    return new Promise((resolve, reject) => {
-      writer.on('finish', () => resolve({ success: true, skipped: false, path: savePath }));
-      writer.on('error', (err) => reject(err));
-    });
-  } catch (err) {
-    return { success: false, error: err.message, path: savePath };
+      rememberReferer(url, ref);
+
+      const writer = fs.createWriteStream(savePath);
+      response.data.pipe(writer);
+
+      return await new Promise((resolve, reject) => {
+        writer.on('finish', () => resolve({ success: true, skipped: false, path: savePath }));
+        writer.on('error', (err) => reject(err));
+      });
+    } catch (err) {
+      lastError = err.message;
+      const status = err.response?.status;
+      // Chỉ đổi Referer khi bị chặn hotlink; lỗi khác thì thử tiếp cũng vô ích.
+      if (status !== 403 && status !== 503) break;
+    }
   }
+
+  return { success: false, error: lastError, path: savePath };
 }
 
 /**

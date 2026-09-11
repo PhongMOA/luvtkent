@@ -6,6 +6,11 @@ const App = {
     // Init database
     await window.appDB.init();
 
+    // Warm up remote server in background — Render free tier sleeps after
+    // 15min idle and cold start can take 30s+, which makes the first user
+    // action (e.g. movie search) fail with "Failed to fetch".
+    this.warmUpServer();
+
     // Init modules
     ComicCrawler.init();
     ComicReader.init();
@@ -75,8 +80,183 @@ const App = {
     document.getElementById(`page-${pageName}`)?.classList.add('active');
   },
 
+  warmUpServer() {
+    // Skip on localhost — same-origin Express is always warm.
+    const base = AppConfig.getApiBase();
+    if (!base) return;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 60000);
+    const t0 = performance.now();
+    fetch(base + '/api/health', { cache: 'no-store', signal: controller.signal })
+      .then(r => r.ok && console.log(`☕ Server warm (${Math.round(performance.now() - t0)}ms)`))
+      .catch(err => console.log('⚠️ Warm-up ping failed:', err.message))
+      .finally(() => clearTimeout(timer));
+  },
+
+  // Block until the remote server responds to /api/health, or the timeout
+  // expires. Returns true if reachable, false otherwise. Use before any
+  // user-triggered remote action that would otherwise crash with
+  // "Failed to fetch" on a cold Render dyno.
+  async ensureServerReady({ onProgress, totalTimeoutMs = 60000, intervalMs = 3000, pingTimeoutMs = 10000 } = {}) {
+    const base = AppConfig.getApiBase();
+    if (!base) return true; // localhost: same-origin Express is always up
+    const deadline = Date.now() + totalTimeoutMs;
+    let attempt = 0;
+    while (Date.now() < deadline) {
+      attempt++;
+      try {
+        const ctrl = new AbortController();
+        const t = setTimeout(() => ctrl.abort(), pingTimeoutMs);
+        const res = await fetch(base + '/api/health', { cache: 'no-store', signal: ctrl.signal });
+        clearTimeout(t);
+        if (res.ok) return true;
+      } catch (_) {
+        // network error or abort — keep polling
+      }
+      onProgress?.(attempt);
+      if (Date.now() + intervalMs >= deadline) break;
+      await new Promise(r => setTimeout(r, intervalMs));
+    }
+    return false;
+  },
+
   async loadSettings() {
-    // Settings loaded here if any
+    const pairs = await window.appDB.getSetting('domainReplacements');
+    AppConfig.setDomainMap(Array.isArray(pairs) ? pairs : []);
+    this.renderDomainReplacements();
+  },
+
+  // Thu thập các domain nguồn hiện có trong thư viện để làm option cho
+  // multi-select "domain cũ". Ưu tiên ComicLibrary.comics đã nạp; nếu chưa có
+  // thì đọc thẳng từ DB.
+  async _getLibraryHosts() {
+    let comics = (window.ComicLibrary && ComicLibrary.comics) || [];
+    if ((!comics || !comics.length) && window.appDB?.getAllComics) {
+      try { comics = await window.appDB.getAllComics(); } catch (_) { comics = []; }
+    }
+    const set = new Set();
+    (comics || []).forEach(c => {
+      const url = c.url || (c.id && String(c.id).startsWith('http') ? c.id : '');
+      if (!url) return;
+      try { set.add(new URL(url).host.toLowerCase()); } catch (_) {}
+    });
+    return Array.from(set).sort();
+  },
+
+  async renderDomainReplacements() {
+    const list = document.getElementById('domain-replacements-list');
+    if (!list) return;
+    const pairs = AppConfig.getDomainMap();
+    if (pairs.length === 0) {
+      list.innerHTML = `<div style="font-size:13px; color: var(--text-tertiary); font-style: italic;">
+        Chưa có cặp domain nào. Bấm "Thêm cặp domain" để thêm.
+      </div>`;
+      return;
+    }
+
+    const hosts = await this._getLibraryHosts();
+
+    list.innerHTML = pairs.map((p, i) => {
+      const froms = Array.isArray(p.from) ? p.from : (p.from ? [p.from] : []);
+      // Gộp host trong thư viện với các domain đang chọn (kể cả domain đã bị
+      // migrate nên không còn trong thư viện) để không mất lựa chọn cũ.
+      const optionHosts = Array.from(new Set([...hosts, ...froms])).sort();
+      const size = Math.min(Math.max(optionHosts.length, 3), 6);
+      const options = optionHosts.length
+        ? optionHosts.map(h =>
+            `<option value="${h}" ${froms.includes(h) ? 'selected' : ''}>${h}</option>`
+          ).join('')
+        : '';
+      const emptyHint = optionHosts.length
+        ? ''
+        : `<div style="font-size:12px; color: var(--text-tertiary); font-style: italic; padding:8px;">Thư viện chưa có nguồn nào</div>`;
+      return `
+      <div class="domain-row" data-index="${i}" style="display:flex; gap:8px; align-items:flex-start;">
+        <div style="flex:1; min-width:0;">
+          <select multiple class="domain-from" size="${size}"
+            style="width:100%; box-sizing:border-box; padding:6px 8px; border-radius:8px; border:1px solid var(--border); background:var(--bg-secondary); color:var(--text-primary); font-size:13px;">
+            ${options}
+          </select>
+          ${emptyHint}
+        </div>
+        <span class="material-icons-round" style="color:var(--text-tertiary); font-size:18px; margin-top:8px;">arrow_forward</span>
+        <input type="text" class="domain-to" value="${p.to}" placeholder="domain mới (vd: toptruyenzone9.com)"
+          style="flex:1; min-width:0; margin-top:8px; padding:8px 10px; border-radius:8px; border:1px solid var(--border); background:var(--bg-secondary); color:var(--text-primary); font-size:13px;">
+        <button class="btn btn-danger domain-remove" title="Xóa cặp này" style="padding:6px 10px; margin-top:8px;">
+          <span class="material-icons-round">delete</span>
+        </button>
+      </div>
+    `;
+    }).join('');
+
+    list.querySelectorAll('.domain-row').forEach(row => {
+      const idx = parseInt(row.dataset.index);
+      const fromSelect = row.querySelector('.domain-from');
+      const toInput = row.querySelector('.domain-to');
+      const onChange = async () => {
+        const pairs = AppConfig.getDomainMap();
+        const froms = fromSelect
+          ? Array.from(fromSelect.selectedOptions).map(o => o.value)
+          : [];
+        pairs[idx] = { from: froms, to: toInput.value.trim() };
+        AppConfig.setDomainMap(pairs);
+        await window.appDB.setSetting('domainReplacements', AppConfig.getDomainMap());
+      };
+      fromSelect?.addEventListener('change', onChange);
+      toInput.addEventListener('change', onChange);
+      row.querySelector('.domain-remove').addEventListener('click', async () => {
+        const pairs = AppConfig.getDomainMap();
+        pairs.splice(idx, 1);
+        AppConfig.setDomainMap(pairs);
+        await window.appDB.setSetting('domainReplacements', AppConfig.getDomainMap());
+        this.renderDomainReplacements();
+      });
+    });
+  },
+
+  setupDomainReplacementSettings() {
+    const addBtn = document.getElementById('btn-add-domain-replacement');
+    const applyBtn = document.getElementById('btn-apply-domain-replacement');
+    if (!addBtn || !applyBtn) return;
+
+    addBtn.addEventListener('click', async () => {
+      const pairs = AppConfig.getDomainMap();
+      pairs.push({ from: [], to: '' });
+      AppConfig.setDomainMap(pairs);
+      await window.appDB.setSetting('domainReplacements', AppConfig.getDomainMap());
+      this.renderDomainReplacements();
+    });
+
+    applyBtn.addEventListener('click', async () => {
+      const pairs = AppConfig.getDomainMap().filter(p =>
+        (Array.isArray(p.from) ? p.from.length : p.from) && p.to
+      );
+      if (pairs.length === 0) {
+        this.showToast('Chưa có cặp domain hợp lệ để áp dụng', 'warning');
+        return;
+      }
+      if (!confirm(`Áp dụng ${pairs.length} cặp domain cho toàn bộ thư viện truyện? URL và id của truyện sẽ được cập nhật.`)) {
+        return;
+      }
+      const statusEl = document.getElementById('domain-replacement-status');
+      applyBtn.disabled = true;
+      const originalHtml = applyBtn.innerHTML;
+      applyBtn.innerHTML = '<span class="material-icons-round spin">sync</span> Đang áp dụng...';
+      statusEl.textContent = 'Đang quét thư viện...';
+
+      try {
+        const stats = await ComicLibrary.migrateAllDomains();
+        statusEl.innerHTML = `<span style="color:var(--success)">✓ Đã cập nhật ${stats.updated}/${stats.scanned} truyện (${stats.chaptersUpdated} chapter)</span>`;
+        this.showToast(`Đã migrate ${stats.updated} truyện sang domain mới`, 'success');
+        await ComicLibrary.loadComics();
+      } catch (err) {
+        statusEl.innerHTML = `<span style="color:var(--danger)">✗ Lỗi: ${err.message}</span>`;
+        this.showToast(`Lỗi: ${err.message}`, 'error');
+      } finally {
+        applyBtn.disabled = false;
+        applyBtn.innerHTML = originalHtml;
+      }
+    });
   },
 
   setupSettings() {
@@ -174,6 +354,9 @@ const App = {
     document.getElementById('btn-check-update').addEventListener('click', () => {
       this.checkForUpdates(false);
     });
+
+    // Domain replacement handlers
+    this.setupDomainReplacementSettings();
   },
 
   async checkForUpdates(silent) {

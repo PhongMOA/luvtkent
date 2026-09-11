@@ -66,7 +66,7 @@
         <div class="card glass-card" id="crawl-input-card">
           <div class="input-group">
             <span class="input-icon material-icons-round">link</span>
-            <input type="url" id="comic-url" placeholder="Nhập link bộ truyện (VD: https://www.toptruyenssi.com/truyen-tranh/...)" autocomplete="off">
+            <input type="url" id="comic-url" placeholder="Nhập link bộ truyện (VD: https://www.toptruyenzone9.com/truyen-tranh/...)" autocomplete="off">
             <button class="btn btn-primary" id="btn-scan" title="Quét truyện">
               <span class="material-icons-round">search</span>
               <span>Quét</span>
@@ -271,6 +271,14 @@
               <span class="material-icons-round">search</span>
               <input type="text" id="lib-search-input" placeholder="Tìm truyện theo tên hoặc thể loại...">
             </div>
+            <select id="lib-source-filter" title="Lọc theo nguồn truyện"
+              style="padding: 10px 12px; border-radius: 10px; border: 1px solid var(--border); background: var(--bg-secondary); color: var(--text-primary); font-size: 14px; min-width: 180px; cursor: pointer;">
+              <option value="">Tất cả nguồn</option>
+            </select>
+            <button class="btn btn-secondary" id="lib-dedupe-btn" title="Tìm và gộp các truyện trùng tên (giữ bản có nhiều chapter nhất, kế thừa sao + tiến độ đọc)">
+              <span class="material-icons-round">cleaning_services</span>
+              Dọn trùng lặp
+            </button>
             <button class="btn btn-primary" id="lib-update-all-btn" title="Quét & tải tập mới cho tất cả truyện trong thư viện">
               <span class="material-icons-round">sync</span>
               Cập nhật tất cả
@@ -325,6 +333,7 @@
                 <div id="lib-detail-genres" class="comic-genres"></div>
                 <p id="lib-detail-desc" class="comic-desc"></p>
                 <p id="lib-detail-date" class="lib-detail-date"></p>
+                <p id="lib-detail-source" class="lib-detail-source" style="font-size: 13px; color: var(--text-tertiary); margin-top: 4px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap;"></p>
                 <div class="lib-detail-reader-actions" style="margin-top: 16px; display: flex; gap: 10px; flex-wrap: wrap;">
                   <button class="btn btn-primary" id="lib-detail-read-first">
                     <span class="material-icons-round">skip_previous</span>
@@ -757,6 +766,29 @@
               Kéo từ Cloud
             </button>
           </div>
+        </div>
+
+        <div class="card glass-card">
+          <h3 class="card-title">
+            <span class="material-icons-round">swap_horiz</span>
+            Thay thế domain nguồn truyện
+          </h3>
+          <p style="font-size: 13px; color: var(--text-tertiary); margin-bottom: 12px;">
+            Khi trang truyện đổi domain (domain cũ bị redirect Google/404), chọn một hoặc nhiều <code>domain cũ</code> (giữ Ctrl/Cmd để chọn nhiều) rồi nhập <code>domain mới</code>.
+            Áp dụng sẽ cập nhật URL truyện và từng chapter trong thư viện. Mọi scan/cập nhật sau đó sẽ tự rewrite.
+          </p>
+          <div id="domain-replacements-list" style="display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px;"></div>
+          <div class="settings-actions">
+            <button class="btn btn-secondary" id="btn-add-domain-replacement">
+              <span class="material-icons-round">add</span>
+              Thêm cặp domain
+            </button>
+            <button class="btn btn-primary" id="btn-apply-domain-replacement">
+              <span class="material-icons-round">published_with_changes</span>
+              Áp dụng cho thư viện
+            </button>
+          </div>
+          <div id="domain-replacement-status" style="font-size: 13px; color: var(--text-secondary); margin-top: 10px;"></div>
         </div>
 
         <div class="card glass-card">
