@@ -1,12 +1,37 @@
--- Run this in your Supabase SQL Editor to add the new columns for the Music tab feature and Star/Featured feature
+-- Schema đầy đủ cho LuvTK Ent (chạy trong Supabase SQL Editor để dựng lại DB)
+-- App dùng anon key và chạy như một singleton cá nhân nên RLS được tắt
 
--- Add is_starred, auto_delete_old_chapters, and source_url columns to 'comics' table if they don't exist
-ALTER TABLE comics 
-  ADD COLUMN IF NOT EXISTS is_starred BOOLEAN DEFAULT false,
-  ADD COLUMN IF NOT EXISTS auto_delete_old_chapters BOOLEAN DEFAULT false,
-  ADD COLUMN IF NOT EXISTS source_url TEXT;
+CREATE TABLE IF NOT EXISTS movies (
+  id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  year TEXT,
+  poster_path TEXT,
+  backdrop_path TEXT,
+  overview TEXT,
+  rating NUMERIC,
+  genres JSONB DEFAULT '[]'::jsonb,
+  runtime INTEGER,
+  category TEXT DEFAULT 'watchlist',
+  watched_episodes JSONB DEFAULT '[]'::jsonb,
+  added_at TIMESTAMPTZ DEFAULT NOW()
+);
 
--- If you also want to sync Music materials, you should create the 'music' table
+CREATE TABLE IF NOT EXISTS comics (
+  id TEXT PRIMARY KEY,
+  title TEXT,
+  cover TEXT,
+  status TEXT,
+  genres JSONB DEFAULT '[]'::jsonb,
+  description TEXT,
+  source_url TEXT,
+  chapters JSONB DEFAULT '[]'::jsonb,
+  last_read_chapter INTEGER,
+  last_read_at TIMESTAMPTZ,
+  saved_at TIMESTAMPTZ DEFAULT NOW(),
+  is_starred BOOLEAN DEFAULT false,
+  auto_delete_old_chapters BOOLEAN DEFAULT false
+);
+
 CREATE TABLE IF NOT EXISTS music (
   id TEXT PRIMARY KEY,
   title TEXT NOT NULL,
@@ -17,12 +42,25 @@ CREATE TABLE IF NOT EXISTS music (
   added_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Fix: Add missing columns if the table was created previously without them
-ALTER TABLE music
-  ADD COLUMN IF NOT EXISTS content TEXT,
-  ADD COLUMN IF NOT EXISTS url TEXT,
-  ADD COLUMN IF NOT EXISTS type TEXT,
-  ADD COLUMN IF NOT EXISTS note TEXT;
+-- Karaoke songs (sync giữa PC và mobile)
+CREATE TABLE IF NOT EXISTS karaoke (
+  id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  artist TEXT,
+  lyrics TEXT,
+  added_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
 
--- Fix RLS Error 401: Disable Row Level Security (RLS) entirely since the application functions as a local singleton
+CREATE TABLE IF NOT EXISTS settings (
+  key TEXT PRIMARY KEY,
+  value TEXT
+);
+
+ALTER TABLE movies DISABLE ROW LEVEL SECURITY;
+ALTER TABLE comics DISABLE ROW LEVEL SECURITY;
 ALTER TABLE music DISABLE ROW LEVEL SECURITY;
+ALTER TABLE karaoke DISABLE ROW LEVEL SECURITY;
+ALTER TABLE settings DISABLE ROW LEVEL SECURITY;
+
+GRANT ALL ON movies, comics, music, karaoke, settings TO anon, authenticated;

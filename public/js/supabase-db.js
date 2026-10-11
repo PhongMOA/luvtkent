@@ -3,8 +3,8 @@
  * Mirrors the AppDB (IndexedDB) interface so it can be used as a transparent sync layer
  */
 
-const SUPABASE_URL = 'https://oovyokamkxhtjixngdpn.supabase.co';
-const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9vdnlva2Fta3hodGppeG5nZHBuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU1MTQzOTQsImV4cCI6MjA5MTA5MDM5NH0.Nt_kcWNT-x8ol2mTrJzy0xTTc5WOA9mGNlk7lHcWuHc';
+const SUPABASE_URL = 'https://qhkrfsprauhraelnwouc.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFoa3Jmc3ByYXVocmFlbG53b3VjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTE3MDc3NDcsImV4cCI6MjEwNzI4Mzc0N30.TncT07sw4m2hhOdpg6UyVn1ys-WUO5HZxmVWTQrtBtE';
 
 class SupabaseDB {
   constructor() {
@@ -132,6 +132,26 @@ class SupabaseDB {
     return this._request(`/music?id=eq.${encodeURIComponent(id)}`, { method: 'DELETE' });
   }
 
+  // ========= KARAOKE =========
+
+  async saveKaraoke(song) {
+    const row = this._karaokeToRow(song);
+    return this._request('/karaoke', {
+      method: 'POST',
+      headers: { 'Prefer': 'return=representation,resolution=merge-duplicates' },
+      body: JSON.stringify(row),
+    });
+  }
+
+  async getAllKaraoke() {
+    const rows = await this._request('/karaoke?order=added_at.desc');
+    return rows ? rows.map(r => this._rowToKaraoke(r)) : [];
+  }
+
+  async deleteKaraoke(id) {
+    return this._request(`/karaoke?id=eq.${encodeURIComponent(id)}`, { method: 'DELETE' });
+  }
+
   // ========= SETTINGS =========
 
   async setSetting(key, value) {
@@ -245,6 +265,28 @@ class SupabaseDB {
     };
   }
 
+  _karaokeToRow(song) {
+    return {
+      id: String(song.id),
+      title: song.title,
+      artist: song.artist || null,
+      lyrics: song.lyrics || null,
+      added_at: song.addedAt || new Date().toISOString(),
+      updated_at: song.updatedAt || new Date().toISOString(),
+    };
+  }
+
+  _rowToKaraoke(row) {
+    return {
+      id: row.id,
+      title: row.title,
+      artist: row.artist || '',
+      lyrics: row.lyrics || '',
+      addedAt: row.added_at,
+      updatedAt: row.updated_at,
+    };
+  }
+
   // ========= AUTO-FIX: Patch missing source_url from id =========
 
   async fixMissingSourceUrls() {
@@ -303,7 +345,7 @@ class SupabaseDB {
 
   async syncFromLocal(localDB) {
     console.log('[SupabaseDB] Starting push to Supabase...');
-    let synced = { movies: 0, comics: 0, settings: 0, music: 0 };
+    let synced = { movies: 0, comics: 0, settings: 0, music: 0, karaoke: 0 };
 
     // Sync movies
     const movies = await localDB.getAllMovies();
@@ -324,6 +366,13 @@ class SupabaseDB {
     for (const m of musicLib) {
       await this.saveMusic(m);
       synced.music++;
+    }
+
+    // Sync karaoke
+    const karaokeSongs = await localDB.getAllKaraoke();
+    for (const song of karaokeSongs) {
+      await this.saveKaraoke(song);
+      synced.karaoke++;
     }
 
     console.log(`[SupabaseDB] Push complete:`, synced);

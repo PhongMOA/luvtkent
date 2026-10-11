@@ -37,6 +37,7 @@ const App = {
         MovieManager.loadMovies();
         ComicLibrary.loadComics();
         if (typeof MusicManager !== 'undefined') MusicManager.loadMusicList();
+        if (typeof KaraokeManager !== 'undefined') KaraokeManager.loadList();
         console.log('✅ Đồng bộ tự động hoàn tất!');
       } catch (e) {
         console.log('⚠️ Không thể đồng bộ tự động:', e.message);
@@ -318,7 +319,7 @@ const App = {
 
       try {
         const result = await window.appDB.syncToCloud();
-        statusEl.innerHTML = `<span style="color:var(--success)">✓ Đã đẩy: ${result.movies} phim, ${result.comics} truyện, ${result.settings} cài đặt</span>`;
+        statusEl.innerHTML = `<span style="color:var(--success)">✓ Đã đẩy: ${result.movies} phim, ${result.comics} truyện, ${result.karaoke || 0} bài karaoke</span>`;
         this.showToast('Đồng bộ lên cloud thành công!', 'success');
       } catch (err) {
         statusEl.innerHTML = `<span style="color:var(--danger)">✗ Lỗi: ${err.message}</span>`;
@@ -338,10 +339,11 @@ const App = {
 
       try {
         const result = await window.appDB.syncFromCloud();
-        statusEl.innerHTML = `<span style="color:var(--success)">✓ Đã kéo: ${result.movies} phim, ${result.comics} truyện</span>`;
+        statusEl.innerHTML = `<span style="color:var(--success)">✓ Đã kéo: ${result.movies} phim, ${result.comics} truyện, ${result.karaoke || 0} bài karaoke</span>`;
         this.showToast('Kéo dữ liệu từ cloud thành công!', 'success');
         MovieManager.loadMovies();
         ComicLibrary.loadComics();
+        if (typeof KaraokeManager !== 'undefined') KaraokeManager.loadList();
       } catch (err) {
         statusEl.innerHTML = `<span style="color:var(--danger)">✗ Lỗi: ${err.message}</span>`;
         this.showToast(`Lỗi sync: ${err.message}`, 'error');

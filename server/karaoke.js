@@ -35,11 +35,24 @@ async function searchGoogle(query) {
     throw new Error('Query is required');
   }
 
-  const got = await loadGotScraping();
-
   // Thêm "lời bài hát" để bias kết quả về các trang lyrics
   const searchQuery = `${query} lời bài hát`;
 
+  // DuckDuckGo HTML hay trả trang CAPTCHA chống bot (HTTP 202) → fallback sang bản Lite
+  let results = [];
+  try {
+    results = await searchDuckDuckGoHtml(searchQuery);
+  } catch (err) {
+    console.warn('[KARAOKE] DDG html lỗi:', err.message);
+  }
+  if (!results.length) {
+    results = await searchDuckDuckGoLite(searchQuery);
+  }
+  return results.slice(0, 10);
+}
+
+async function searchDuckDuckGoHtml(searchQuery) {
+  const got = await loadGotScraping();
   const res = await got({
     url: 'https://html.duckduckgo.com/html/',
     method: 'POST',
@@ -50,34 +63,54 @@ async function searchGoogle(query) {
     },
     timeout: { request: 20000 },
   });
-
-  const html = res.body;
-  const $ = cheerio.load(html);
-  const results = [];
-  const seen = new Set();
-
+  const $ = cheerio.load(res.body);
+  const items = [];
   $('.result').each((_, el) => {
     const $el = $(el);
     const $a = $el.find('.result__a').first();
-    let href = $a.attr('href') || '';
+    items.push({
+      href: $a.attr('href'),
+      title: $a.text(),
+      snippet: $el.find('.result__snippet').first().text(),
+    });
+  });
+  return normalizeResults(items);
+}
 
+async function searchDuckDuckGoLite(searchQuery) {
+  const got = await loadGotScraping();
+  const res = await got({
+    url: 'https://lite.duckduckgo.com/lite/?q=' + encodeURIComponent(searchQuery),
+    headers: COMMON_HEADERS,
+    timeout: { request: 20000 },
+  });
+  const $ = cheerio.load(res.body);
+  const items = [];
+  $('a.result-link').each((_, el) => {
+    const $a = $(el);
+    // Snippet nằm ở <tr> kế tiếp chứa td.result-snippet
+    const snippet = $a.closest('tr').nextAll('tr').find('td.result-snippet').first().text();
+    items.push({ href: $a.attr('href'), title: $a.text(), snippet });
+  });
+  return normalizeResults(items);
+}
+
+function normalizeResults(items) {
+  const results = [];
+  const seen = new Set();
+  for (const item of items) {
     // DuckDuckGo đôi khi wrap link trong //duckduckgo.com/l/?uddg=<encoded>
-    href = unwrapDuckDuckGoRedirect(href);
-
-    if (!href || !/^https?:\/\//i.test(href)) return;
-    if (BLACKLIST_HOSTS.test(href)) return;
-    if (seen.has(href)) return;
+    const href = unwrapDuckDuckGoRedirect(item.href || '');
+    if (!href || !/^https?:\/\//i.test(href)) continue;
+    if (BLACKLIST_HOSTS.test(href)) continue;
+    if (seen.has(href)) continue;
     seen.add(href);
 
-    const title = $a.text().trim();
-    const snippet = $el.find('.result__snippet').first().text().trim();
-
-    if (title) {
-      results.push({ title, url: href, snippet });
-    }
-  });
-
-  return results.slice(0, 10);
+    const title = (item.title || '').trim();
+    const snippet = (item.snippet || '').replace(/\s+/g, ' ').trim();
+    if (title) results.push({ title, url: href, snippet });
+  }
+  return results;
 }
 
 function unwrapDuckDuckGoRedirect(href) {

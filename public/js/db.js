@@ -302,7 +302,15 @@ class AppDB {
     const cloudComics = await window.cloudDB.getAllComics();
     const cloudMusic = await window.cloudDB.getAllMusic(); // add music fetching
 
-    let synced = { movies: 0, comics: 0, music: 0 };
+    // Bảng karaoke có thể chưa được tạo trên Supabase → không làm hỏng cả lần sync
+    let cloudKaraoke = [];
+    try {
+      cloudKaraoke = await window.cloudDB.getAllKaraoke();
+    } catch (e) {
+      console.warn('[CloudSync] Bỏ qua karaoke:', e.message);
+    }
+
+    let synced = { movies: 0, comics: 0, music: 0, karaoke: 0 };
 
     for (const movie of cloudMovies) {
       await this._put('movies', movie);
@@ -317,6 +325,11 @@ class AppDB {
     for (const m of cloudMusic) {
       await this._put('music', m);
       synced.music++;
+    }
+
+    for (const song of cloudKaraoke) {
+      await this._put('karaoke', song);
+      synced.karaoke++;
     }
 
     return synced;
