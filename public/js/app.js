@@ -357,6 +357,19 @@ const App = {
       this.checkForUpdates(false);
     });
 
+    // WebView của Capacitor không tự tải file .apk → mở link bằng trình duyệt hệ thống
+    document.getElementById('update-download-link').addEventListener('click', (e) => {
+      const url = e.currentTarget.href;
+      const Browser = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Browser;
+      if (!AppConfig.isNative() || !url || url.endsWith('#')) return;
+      e.preventDefault();
+      if (Browser) {
+        Browser.open({ url }).catch(() => window.open(url, '_system'));
+      } else {
+        window.open(url, '_system');
+      }
+    });
+
     // Domain replacement handlers
     this.setupDomainReplacementSettings();
   },

@@ -5,7 +5,7 @@
  */
 const AppConfig = {
   // App Version - update this when releasing new versions
-  APP_VERSION: '1.1.3',
+  APP_VERSION: '1.1.4',
   
   // GitHub repo for update checking
   GITHUB_REPO: 'PhongMOA/luvtkent',
