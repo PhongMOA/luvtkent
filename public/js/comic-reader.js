@@ -87,6 +87,7 @@ const ComicReader = {
 
     // Clear images to free memory
     document.getElementById('reader-content').innerHTML = '';
+    this.revokeBlobUrls();
 
     // Refresh library view if opened from library
     if (this.comicId && typeof ComicLibrary !== 'undefined') {
@@ -113,6 +114,7 @@ const ComicReader = {
     // Render images with lazy loading
     const content = document.getElementById('reader-content');
     content.scrollTop = 0;
+    this.revokeBlobUrls();
 
     content.innerHTML = `
       <div class="reader-chapter-header">
@@ -124,6 +126,7 @@ const ComicReader = {
           <img
             class="reader-img"
             data-src="${AppConfig.rewriteUrl('/api/proxy-image?url=' + encodeURIComponent(img))}"
+            data-orig="${encodeURIComponent(img)}"
             alt="Trang ${i + 1}"
             loading="lazy"
           >
@@ -150,6 +153,66 @@ const ComicReader = {
 
     // Start lazy loading images
     this.lazyLoadImages(content);
+  },
+
+  // Trên app Android, server Render (IP datacenter) bị Cloudflare của CDN ảnh
+  // (anhvip.xyz) chặn 403 bất kể Referer, trong khi IP nhà mạng của điện thoại
+  // thì không. Nên tải ảnh trực tiếp từ máy bằng HTTP native (CapacitorHttp —
+  // WebView không cho đặt Referer tùy ý trên <img>), lỗi mới rơi về proxy.
+  // Giữ đồng bộ danh sách domain với server/referer.js.
+  NATIVE_REFERERS: [
+    'https://www.toptruyenzone9.com/',
+    'https://www.toptruyenzone7.com/',
+    'https://www.toptruyenzone.com/',
+  ],
+  TCOMIC_REFERERS: ['https://tcomicfanq.com/'],
+  _nativeReferer: new Map(), // host ảnh -> referer đã tải thành công
+  _blobUrls: [],
+
+  _nativeHttp() {
+    if (!AppConfig.isNative()) return null;
+    const p = window.Capacitor && window.Capacitor.Plugins;
+    return (p && p.CapacitorHttp) || null;
+  },
+
+  async fetchImageNative(url) {
+    const http = this._nativeHttp();
+    if (!http) throw new Error('CapacitorHttp không khả dụng');
+    const host = new URL(url).host;
+    const base = /tcomic\.top|wasabisys\.com/i.test(host) ? this.TCOMIC_REFERERS : this.NATIVE_REFERERS;
+    const candidates = [...new Set([this._nativeReferer.get(host), ...base].filter(Boolean))];
+
+    for (const referer of candidates) {
+      const resp = await http.request({
+        method: 'GET',
+        url,
+        headers: { Referer: referer, Accept: 'image/avif,image/webp,image/*,*/*;q=0.8' },
+        responseType: 'blob',
+        connectTimeout: 12000,
+        readTimeout: 20000,
+      });
+      if (resp.status >= 200 && resp.status < 400 && resp.data) {
+        this._nativeReferer.set(host, referer);
+        const headers = resp.headers || {};
+        const ctKey = Object.keys(headers).find(k => k.toLowerCase() === 'content-type');
+        const type = (ctKey && headers[ctKey]) || 'image/jpeg';
+        // responseType 'blob' trả về base64
+        const bin = atob(resp.data);
+        const bytes = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+        const blobUrl = URL.createObjectURL(new Blob([bytes], { type }));
+        this._blobUrls.push(blobUrl);
+        return blobUrl;
+      }
+      // Chỉ 403/503 (chặn hotlink) mới đáng thử Referer khác.
+      if (resp.status !== 403 && resp.status !== 503) break;
+    }
+    throw new Error('native fetch failed');
+  },
+
+  revokeBlobUrls() {
+    this._blobUrls.forEach(u => URL.revokeObjectURL(u));
+    this._blobUrls = [];
   },
 
   lazyLoadImages(container) {
@@ -219,10 +282,19 @@ const ComicReader = {
 
       // Cache-bust trên các lần thử lại để tránh CDN/trình duyệt trả lại
       // response lỗi đã cache theo đúng URL cũ.
-      img.src = attempt > 0
+      const proxySrc = attempt > 0
         ? baseSrc + (baseSrc.includes('?') ? '&' : '?') + '_retry=' + attempt
         : baseSrc;
       img.removeAttribute('data-src');
+
+      const orig = img.dataset.orig ? decodeURIComponent(img.dataset.orig) : '';
+      if (orig && this._nativeHttp()) {
+        this.fetchImageNative(orig)
+          .then(blobUrl => { img.src = blobUrl; })
+          .catch(() => { img.src = proxySrc; });
+      } else {
+        img.src = proxySrc;
+      }
     };
 
     const observer = new IntersectionObserver((entries) => {
