@@ -284,18 +284,18 @@ const KaraokeManager = {
     listEl.innerHTML = filtered.map((song, idx) => {
       const lineCount = (song.lyrics || '').split('\n').length;
       return `
-        <div class="karaoke-row" data-id="${song.id}" style="display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--border-color); border-radius: 10px; background: var(--bg-secondary); transition: background 0.15s;">
-          <div style="width: 28px; text-align: center; font-size: 12px; color: var(--text-tertiary); flex-shrink: 0;">${idx + 1}</div>
-          <span class="material-icons-round" style="color: var(--primary-color, #8b5cf6); font-size: 20px; flex-shrink: 0;">mic</span>
-          <div style="flex: 1; min-width: 0;">
-            <div style="font-size: 14px; font-weight: 600; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${this.escapeHtml(song.title)}</div>
-            <div style="font-size: 12px; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${this.escapeHtml(song.artist || '—')}</div>
+        <div class="karaoke-row" data-id="${song.id}">
+          <div class="karaoke-row-num">${idx + 1}</div>
+          <span class="material-icons-round karaoke-row-icon">mic</span>
+          <div class="karaoke-row-info">
+            <div class="karaoke-row-title">${this.escapeHtml(song.title)}</div>
+            <div class="karaoke-row-artist">${this.escapeHtml(song.artist || '—')}</div>
           </div>
-          <div style="font-size: 11px; color: var(--text-tertiary); text-align: right; flex-shrink: 0; min-width: 70px;">
+          <div class="karaoke-row-meta">
             <div>${lineCount} dòng</div>
             <div>${new Date(song.addedAt).toLocaleDateString('vi-VN')}</div>
           </div>
-          <div style="display: flex; gap: 4px; flex-shrink: 0;">
+          <div class="karaoke-row-actions">
             <button class="btn btn-primary btn-sm karaoke-open-btn" data-id="${song.id}" title="Hát" style="padding: 6px 10px; min-width: unset;">
               <span class="material-icons-round" style="font-size: 16px;">play_arrow</span>
             </button>

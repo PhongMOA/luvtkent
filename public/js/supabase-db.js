@@ -35,6 +35,19 @@ class SupabaseDB {
     return text ? JSON.parse(text) : null;
   }
 
+  // Lấy toàn bộ bảng theo từng trang nhỏ để tránh statement timeout (mỗi comic có thể nặng vài MB do chapters JSONB)
+  async _requestAllPaged(path, pageSize = 5) {
+    const sep = path.includes('?') ? '&' : '?';
+    const all = [];
+    for (let offset = 0; ; offset += pageSize) {
+      const rows = await this._request(`${path}${sep}limit=${pageSize}&offset=${offset}`);
+      if (!rows || rows.length === 0) break;
+      all.push(...rows);
+      if (rows.length < pageSize) break;
+    }
+    return all;
+  }
+
   // ========= MOVIES =========
 
   async saveMovie(movie) {
@@ -57,7 +70,7 @@ class SupabaseDB {
   }
 
   async getAllMovies() {
-    const rows = await this._request('/movies?order=added_at.desc');
+    const rows = await this._requestAllPaged('/movies?order=added_at.desc,id.asc', 200);
     return rows ? rows.map(r => this._rowToMovie(r)) : [];
   }
 
@@ -89,7 +102,8 @@ class SupabaseDB {
   }
 
   async getAllComics() {
-    const rows = await this._request('/comics?order=saved_at.desc');
+    // Thêm id vào order để phân trang ổn định khi saved_at trùng nhau
+    const rows = await this._requestAllPaged('/comics?order=saved_at.desc,id.asc', 5);
     return rows ? rows.map(r => this._rowToComic(r)) : [];
   }
 

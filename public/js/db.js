@@ -159,7 +159,9 @@ class AppDB {
     if (comic) {
       comic.lastReadChapter = chapterIndex;
       comic.lastReadAt = new Date().toISOString();
-      const result = await this.saveComic(comic);
+      // Chỉ ghi local + PATCH cột tiến độ, không đẩy cả truyện: bản local có
+      // thể còn cũ (chưa sync xong) và sẽ ghi đè dữ liệu đã làm sạch trên cloud.
+      const result = await this._put('comicLibrary', comic);
       this._cloudSync(cloud => cloud.updateComicReadProgress(id, chapterIndex));
       return result;
     }

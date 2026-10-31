@@ -2688,3 +2688,90 @@ a:hover { text-decoration: underline; }
     padding: 6px 10px !important;
   }
 }
+
+/* ===== KARAOKE LIST ===== */
+.karaoke-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  background: var(--bg-secondary);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.karaoke-row-num {
+  width: 28px;
+  flex-shrink: 0;
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
+.karaoke-row-icon {
+  flex-shrink: 0;
+  font-size: 20px;
+  color: var(--primary-color, #8b5cf6);
+}
+
+.karaoke-row-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.karaoke-row-title,
+.karaoke-row-artist {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.karaoke-row-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.karaoke-row-artist {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.karaoke-row-meta {
+  min-width: 70px;
+  flex-shrink: 0;
+  text-align: right;
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+.karaoke-row-actions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+/* Màn hình nhỏ chỉ để hát: chỉ hiện tên bài (xuống dòng nếu dài), bấm vào dòng
+   để mở lời. Sửa/xóa làm trên PC. */
+@media (max-width: 640px) {
+  .karaoke-row-num,
+  .karaoke-row-icon,
+  .karaoke-row-artist,
+  .karaoke-row-meta,
+  .karaoke-row-actions {
+    display: none;
+  }
+
+  .karaoke-row {
+    padding: 12px 14px;
+  }
+
+  .karaoke-row-title {
+    white-space: normal;
+    overflow-wrap: anywhere;
+    font-size: 15px;
+    line-height: 1.4;
+  }
+}
