@@ -21,6 +21,7 @@ const ENV_REFERERS = (process.env.COMIC_REFERER || '')
 
 // Domain TopTruyen được CDN anhvip.xyz chấp nhận (kiểm chứng 2026-08-03).
 const TOPTRUYEN_REFERERS = [
+  'https://www.toptruyenzone15.com/',
   'https://www.toptruyenzone9.com/',
   'https://www.toptruyenzone7.com/',
   'https://www.toptruyenzone.com/',

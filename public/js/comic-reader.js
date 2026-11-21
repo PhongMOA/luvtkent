@@ -60,14 +60,19 @@ const ComicReader = {
    */
   openFromCrawlResults(chaptersData, startIndex = 0, comicId = null) {
     this.comicId = comicId;
-    this.chapters = chaptersData.filter(ch => ch.images && ch.images.length > 0);
+    // Mở từ thư viện: giữ nguyên mảng chapter để chỉ số khớp với danh sách
+    // chương và với lastReadChapter (lọc bỏ chương rỗng làm lệch chỉ số →
+    // bấm 931 ra 932, tiến độ lưu sai). Chương rỗng sẽ được crawl lại khi mở.
+    this.chapters = comicId
+      ? (chaptersData || []).filter(Boolean)
+      : (chaptersData || []).filter(ch => ch.images && ch.images.length > 0);
 
     if (this.chapters.length === 0) {
       App.showToast('Không có ảnh để hiển thị', 'warning');
       return;
     }
 
-    this.currentChapterIndex = Math.min(startIndex, this.chapters.length - 1);
+    this.currentChapterIndex = Math.max(0, Math.min(startIndex || 0, this.chapters.length - 1));
     this.open();
   },
 
@@ -101,6 +106,7 @@ const ComicReader = {
   renderChapter() {
     const chapter = this.chapters[this.currentChapterIndex];
     if (!chapter) return;
+    if (!Array.isArray(chapter.images)) chapter.images = [];
 
     // Update title
     document.getElementById('reader-title').textContent = chapter.chapter;
@@ -151,8 +157,77 @@ const ComicReader = {
       nextBtn.addEventListener('click', () => this.nextChapter());
     }
 
+    if (chapter.images.length === 0) {
+      const header = content.querySelector('.reader-chapter-header p');
+      if (header) header.textContent = 'Chương chưa có ảnh — đang tải lại từ nguồn…';
+      this.recrawlChapter(chapter, 'empty');
+      return;
+    }
+
     // Start lazy loading images
-    this.lazyLoadImages(content);
+    this.lazyLoadImages(content, chapter);
+  },
+
+  /**
+   * Crawl lại 1 chương khi nó rỗng hoặc ảnh hỏng (nguồn upload lại chương thì
+   * link ảnh cũ trả 404). Mỗi chương chỉ thử 1 lần mỗi phiên đọc. Có ảnh mới
+   * thì cập nhật vào thư viện + cloud và vẽ lại nếu người dùng còn ở chương đó.
+   */
+  async recrawlChapter(chapter, reason) {
+    if (!chapter || !chapter.url || chapter._recrawling) return;
+    if (reason === 'broken') chapter._broken = (chapter._broken || 0) + 1;
+
+    // Chỉ gọi server 1 lần mỗi chương; các lần ảnh lỗi sau dùng lại kết quả.
+    if (!chapter._recrawled) {
+      chapter._recrawling = true;
+      let fresh = [];
+      try {
+        const res = await fetch(AppConfig.rewriteUrl('/api/crawl/chapter-images'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url: chapter.url }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (res.ok && Array.isArray(data.images)) fresh = data.images;
+      } catch (err) {
+        console.warn('[Reader] crawl lại chương lỗi:', err);
+      } finally {
+        chapter._recrawling = false;
+        chapter._recrawled = true;
+      }
+      chapter._fresh = fresh;
+    }
+
+    const images = chapter._fresh || [];
+    const onThisChapter = () => this.isOpen && this.chapters[this.currentChapterIndex] === chapter;
+    const old = chapter.images.length;
+    const same = images.length === old && images.every((u, i) => u === chapter.images[i]);
+    // Nguồn có lúc upload lại chương với ÍT ảnh hơn (đang cập nhật dở) trong
+    // khi ảnh cũ vẫn xem được → chỉ thay khi bản mới không hụt nhiều, hoặc ảnh
+    // cũ đã hỏng thật (≥3 ảnh lỗi, hay toàn bộ nếu chương ít ảnh).
+    const brokenEnough = (chapter._broken || 0) >= Math.min(3, Math.max(1, old));
+    const replace = images.length > 0 && !same &&
+      (old === 0 || images.length >= old * 0.7 || brokenEnough);
+    if (!replace) {
+      if (reason === 'empty' && onThisChapter()) {
+        const header = document.querySelector('#reader-content .reader-chapter-header p');
+        if (header) header.textContent = 'Nguồn chưa có ảnh cho chương này.';
+      }
+      return;
+    }
+
+    chapter._broken = 0;
+    chapter._fresh = null;
+    chapter.images = images;
+    chapter.imageCount = images.length;
+    if (this.comicId && typeof ComicLibrary !== 'undefined' && ComicLibrary.persistChapterImages) {
+      ComicLibrary.persistChapterImages(this.comicId, chapter.url, images)
+        .catch(err => console.warn('[Reader] lưu ảnh mới lỗi:', err));
+    }
+    if (onThisChapter()) {
+      App.showToast(`Đã tải lại ${chapter.chapter} (${images.length} ảnh)`, 'success');
+      this.renderChapter();
+    }
   },
 
   // Trên app Android, server Render (IP datacenter) bị Cloudflare của CDN ảnh
@@ -161,6 +236,7 @@ const ComicReader = {
   // WebView không cho đặt Referer tùy ý trên <img>), lỗi mới rơi về proxy.
   // Giữ đồng bộ danh sách domain với server/referer.js.
   NATIVE_REFERERS: [
+    'https://www.toptruyenzone15.com/',
     'https://www.toptruyenzone9.com/',
     'https://www.toptruyenzone7.com/',
     'https://www.toptruyenzone.com/',
@@ -215,7 +291,7 @@ const ComicReader = {
     this._blobUrls = [];
   },
 
-  lazyLoadImages(container) {
+  lazyLoadImages(container, chapter) {
     const images = container.querySelectorAll('.reader-img[data-src]');
 
     // Trên điện thoại, ảnh hiển thị hẹp hơn (width:100%, max-width:800px) nên
@@ -272,6 +348,8 @@ const ComicReader = {
         img.alt = `⚠ Không tải được trang ${pageNum} (chạm để thử lại)`;
         img.classList.add('error');
         img.style.cursor = 'pointer';
+        // Ảnh hỏng hẳn sau khi đã thử lại → có thể nguồn đã upload lại chương.
+        if (chapter) this.recrawlChapter(chapter, 'broken');
         img.onclick = () => {
           img._retryCount = 0;
           queue.push(img);

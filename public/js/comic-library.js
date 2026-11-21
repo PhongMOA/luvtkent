@@ -86,9 +86,108 @@ const ComicLibrary = {
 
   // Extract the leading numeric portion of a chapter label ("Chapter 12.5" → 12.5).
   _chapterNum(ch) {
-    if (!ch || !ch.chapter) return -1;
-    const m = String(ch.chapter).match(/[\d.,]+/);
+    const label = ch && (ch.chapter || ch.title); // scan trả 'title', bản lưu dùng 'chapter'
+    if (!label) return -1;
+    const m = String(label).match(/[\d.,]+/);
     return m ? parseFloat(m[0].replace(',', '.')) : -1;
+  },
+
+  // Khóa ổn định của 1 chương, không phụ thuộc domain: TopTruyen đổi domain
+  // vài tháng/lần nhưng id chương (số cuối URL) giữ nguyên, còn số chương thì
+  // site có thể đánh lại (vd id 3615877 từ "935" thành "933").
+  _chKey(url) {
+    if (!url) return '';
+    const s = String(url);
+    let m = s.match(/^tcomic:\d+:(\d+)$/);
+    if (m) return 'tc:' + m[1];
+    m = s.match(/\/chapter-[^/?#]+\/(\d+)(?:[/?#]|$)/i);
+    if (m) return 'tt:' + m[1];
+    try {
+      const u = new URL(s);
+      return u.pathname.replace(/\/+$/, '') + u.search;
+    } catch (_) {
+      return s;
+    }
+  },
+
+  // Mục rác sinh ra từ link phân trang danh sách chương (…/chapter-556/xxx?page=183).
+  _isJunkChapter(ch) {
+    return !ch || !ch.url || /[?&]page=\d+/.test(ch.url);
+  },
+
+  /**
+   * Dọn mảng chapter: bỏ mục rác `?page=`, gộp các bản trùng id chương (cùng
+   * chương nhưng lưu dưới nhiều domain) — giữ bản nhiều ảnh nhất, tại vị trí
+   * xuất hiện đầu tiên.
+   */
+  _cleanChapters(chapters) {
+    const out = [];
+    const pos = new Map();
+    for (const ch of chapters || []) {
+      if (this._isJunkChapter(ch)) continue;
+      const key = this._chKey(ch.url);
+      if (pos.has(key)) {
+        const i = pos.get(key);
+        if ((ch.images?.length || 0) > (out[i].images?.length || 0)) out[i] = ch;
+        continue;
+      }
+      pos.set(key, out.length);
+      out.push(ch);
+    }
+    return out;
+  },
+
+  /**
+   * Tìm lại vị trí "đã đọc tới" trong mảng chapter mới: ưu tiên đúng id
+   * chương, không có (chương bị nguồn xóa) thì lấy chương có số lớn nhất
+   * không vượt quá số chương đã đọc.
+   */
+  _remapReadIndex(oldChapters, oldIndex, newChapters) {
+    if (oldIndex === undefined || oldIndex === null) return oldIndex;
+    const old = (oldChapters || [])[oldIndex];
+    if (!old) return newChapters.length ? Math.min(oldIndex, newChapters.length - 1) : undefined;
+    const key = this._chKey(old.url);
+    const idx = newChapters.findIndex(c => this._chKey(c.url) === key);
+    if (idx !== -1) return idx;
+    const num = this._chapterNum(old);
+    let best = -1;
+    let bestNum = -Infinity;
+    newChapters.forEach((c, i) => {
+      const n = this._chapterNum(c);
+      if (n >= 0 && n <= num && n > bestNum) { bestNum = n; best = i; }
+    });
+    return best !== -1 ? best : undefined;
+  },
+
+  /**
+   * Lưu ảnh mới của 1 chương (reader tự crawl lại khi link ảnh hỏng). Lấy bản
+   * cloud mới nhất làm gốc để không ghi đè dữ liệu cũ hơn từ bản local.
+   */
+  async persistChapterImages(comicId, chapterUrl, images) {
+    const key = this._chKey(chapterUrl);
+    const local = await window.appDB.getComic(comicId);
+    let base = local;
+    if (window.cloudDB) {
+      try {
+        const cloud = await window.cloudDB.getComic(comicId);
+        if (cloud) {
+          base = cloud;
+          // Tiến độ đọc local có thể mới hơn (PATCH cloud chạy nền).
+          // Mảng chapter 2 bản có thể khác nhau → remap chỉ số theo id chương.
+          if (local && local.lastReadAt && (!cloud.lastReadAt || local.lastReadAt > cloud.lastReadAt)) {
+            base.lastReadChapter = this._remapReadIndex(local.chapters, local.lastReadChapter, base.chapters || []);
+            base.lastReadAt = local.lastReadAt;
+          }
+        }
+      } catch (_) {}
+    }
+    if (!base) return false;
+    const ch = (base.chapters || []).find(c => this._chKey(c.url) === key);
+    if (!ch) return false;
+    ch.images = images;
+    ch.imageCount = images.length;
+    await window.appDB.saveComic(base);
+    return true;
   },
 
   // Merge a single group of same-title comics into one record and delete the
@@ -320,6 +419,8 @@ const ComicLibrary = {
 
       if (result.status === 'up-to-date') {
         App.showToast('Truyện đã ở tập mới nhất!', 'info');
+        // Có thể đã đồng bộ lại tên/thứ tự chương hoặc tải lại chương lỗi.
+        if (this.selectedComic?.id === comic.id) this.showDetail(comic.id);
       } else if (result.status === 'updated') {
         App.showToast(`Đã tự động cập nhật ${result.newCount} tập mới!`, 'success');
         this.showDetail(comic.id);
@@ -389,22 +490,50 @@ const ComicLibrary = {
     comicInfo.description = comic.description || comicInfo.description;
     comicInfo.cover = comic.cover || comicInfo.cover;
 
-    const existingUrls = new Set((comic.chapters || []).map(c => c.url));
-    let maxExistingNum = -1;
-    (comic.chapters || []).forEach(c => {
-      const match = (c.chapter || c.title || '').match(/[\d.,]+/);
-      if (match) maxExistingNum = Math.max(maxExistingNum, parseFloat(match[0]));
-    });
+    // So khớp theo id chương (không theo URL/số chương): site đổi domain và
+    // có lúc đánh số lại; lọc "số > số lớn nhất" cũ từng làm sót chương 933–935.
+    const existing = this._cleanChapters(comic.chapters);
+    const existingByKey = new Map(existing.map(c => [this._chKey(c.url), c]));
+    const lastReadCh = (comic.chapters || [])[comic.lastReadChapter];
+    const lastReadKey = lastReadCh ? this._chKey(lastReadCh.url) : null;
 
-    const newChapters = allChapters.filter(ch => {
-      if (existingUrls.has(ch.url)) return false;
-      const match = (ch.chapter || ch.title || '').match(/[\d.,]+/);
-      const num = match ? parseFloat(match[0]) : null;
-      if (num !== null && maxExistingNum !== -1) return num > maxExistingNum;
-      return true;
+    // Chương chưa đọc = nằm sau chương đang đọc theo thứ tự của nguồn.
+    const scanKeys = allChapters.map(ch => this._chKey(ch.url));
+    const readPos = lastReadKey ? scanKeys.indexOf(lastReadKey) : -1;
+    const newestFirst = allChapters.length > 1 &&
+      this._chapterNum(allChapters[0]) > this._chapterNum(allChapters[allChapters.length - 1]);
+    const isUnread = (i) => readPos === -1 || (newestFirst ? i < readPos : i > readPos);
+
+    // Nguồn hay upload lại vài chương mới nhất (link ảnh cũ chết) → crawl lại
+    // 2 chương mới nhất chưa đọc; cộng chương chưa có / rỗng / quá ít ảnh.
+    const unreadIdx = allChapters.map((_, i) => i).filter(isUnread);
+    const newestUnread = new Set((newestFirst ? unreadIdx : unreadIdx.reverse()).slice(0, 2));
+    // Chương lỗi phía nguồn (vd Nguyên Tôn chỉ có 1 ảnh) sẽ mãi "ít ảnh" →
+    // giới hạn số chương ít ảnh crawl lại mỗi lần để không tốn request.
+    let lowBudget = 5;
+    // Người dùng có thể chỉ lưu từ giữa truyện → chương thiếu nằm TRƯỚC chương
+    // lưu sớm nhất là cố ý bỏ, không tải về.
+    const keptPos = scanKeys.map((k, i) => (existingByKey.has(k) ? i : -1)).filter(i => i !== -1);
+    const isBeforeSaved = (i) => keptPos.length > 0 &&
+      (newestFirst ? i > Math.max(...keptPos) : i < Math.min(...keptPos));
+    const newChapters = allChapters.filter((ch, i) => {
+      const old = existingByKey.get(scanKeys[i]);
+      if (!old) return !isBeforeSaved(i);
+      if (!isUnread(i)) return false;
+      if (newestUnread.has(i)) return true;
+      if ((old.images?.length || 0) <= 2 && lowBudget > 0) { lowBudget--; return true; }
+      return false;
     });
+    const addedCount = newChapters.filter(ch => !existingByKey.has(this._chKey(ch.url))).length;
 
     if (newChapters.length === 0) {
+      // Không có gì để tải nhưng vẫn đồng bộ cấu trúc (tên/thứ tự chương, bỏ
+      // chương nguồn đã xóa, dọn trùng) nếu khác với nguồn.
+      const before = (comic.chapters || []).map(c => this._chKey(c.url) + '|' + c.chapter).join('\n');
+      const after = allChapters.map((c, i) => scanKeys[i] + '|' + (c.chapter || c.title)).join('\n');
+      if (before !== after) {
+        await this.saveFromCrawlResults(comicInfo, [], { silent: true });
+      }
       return { status: 'up-to-date', newCount: 0 };
     }
 
@@ -447,10 +576,19 @@ const ComicLibrary = {
       }, 1500);
     });
 
-    await this.saveFromCrawlResults(comicInfo, job.results.chaptersData);
+    // Chương đã có ảnh: chỉ nhận bản crawl lại nếu không hụt nhiều ảnh — nguồn
+    // có lúc upload lại chương dở dang (vd 938: nguồn 3 ảnh, bản lưu 28 ảnh
+    // vẫn xem được). Ảnh cũ hỏng thật thì reader tự crawl lại khi đọc.
+    const results = (job.results.chaptersData || []).filter(ch => {
+      const old = existingByKey.get(this._chKey(ch.url));
+      const n = old?.images?.length || 0;
+      return n <= 2 || (ch.images?.length || 0) >= n * 0.7;
+    });
+    await this.saveFromCrawlResults(comicInfo, results, { silent: true });
     fetch(`/api/crawl/job/${jobId}`, { method: 'DELETE' }).catch(() => {});
 
-    return { status: 'updated', newCount: newChapters.length };
+    if (addedCount === 0) return { status: 'up-to-date', newCount: 0 };
+    return { status: 'updated', newCount: addedCount };
   },
 
   async updateAllComics() {
@@ -1037,7 +1175,7 @@ const ComicLibrary = {
   },
 
   // Called from ComicCrawler after crawl completes
-  async saveFromCrawlResults(comicInfo, chaptersData) {
+  async saveFromCrawlResults(comicInfo, chaptersData, { silent = false } = {}) {
     // Nguồn (kể cả site mirror) thường trả về link domain CŨ trong HTML dù ta
     // scan bằng domain mới. Áp lại domain map lên toàn bộ URL trả về để phép
     // "đổi nguồn" trong Settings có tính "dính" — nếu không, mỗi lần cập nhật
@@ -1062,32 +1200,36 @@ const ComicLibrary = {
     let lastReadAt = undefined;
 
     if (existingComic) {
-      lastReadChapter = existingComic.lastReadChapter;
       lastReadAt = existingComic.lastReadAt;
 
+      // Gộp theo id chương (không theo URL): cùng 1 chương có thể được lưu
+      // dưới nhiều domain. Bản crawl mới (có ảnh) thắng bản cũ.
+      const existingClean = this._cleanChapters(existingComic.chapters);
       const chapterMap = new Map();
-      (existingComic.chapters || []).forEach(ch => chapterMap.set(ch.url, ch));
-      newChapters.forEach(ch => chapterMap.set(ch.url, ch));
+      existingClean.forEach(ch => chapterMap.set(this._chKey(ch.url), ch));
+      newChapters.forEach(ch => chapterMap.set(this._chKey(ch.url), ch));
 
-      // Re-order based on original info from crawler
-      const usedUrls = new Set();
-      mergedChapters = (comicInfo.chapters || [])
-           .map(ch => {
-             const m = chapterMap.get(ch.url);
-             if (m) usedUrls.add(ch.url);
-             return m;
-           })
-           .filter(Boolean);
+      // Thứ tự + tên chương theo nguồn (site có thể đổi số/tên chương).
+      const scanList = (comicInfo.chapters || []).filter(ch => !this._isJunkChapter(ch));
+      const usedKeys = new Set();
+      mergedChapters = scanList
+        .map(sc => {
+          const key = this._chKey(sc.url);
+          const m = chapterMap.get(key);
+          if (!m || usedKeys.has(key)) return null;
+          usedKeys.add(key);
+          return { ...m, url: sc.url, chapter: sc.chapter || sc.title || m.chapter };
+        })
+        .filter(Boolean);
 
-      // Preserve any existing/new chapters whose URL didn't appear in the
-      // latest scan (source URL scheme changes, tcomic id shift, etc.).
-      // Without this, re-ordering would silently drop all previously saved
-      // chapters when URLs no longer match.
+      // Chương không còn trong danh sách nguồn = nguồn đã xóa/thay → bỏ.
+      // Chỉ bỏ khi bản scan khớp phần lớn dữ liệu cũ; khớp ít (nguồn đổi kiểu
+      // URL, scan lỗi…) thì giữ lại để không mất chương.
       const leftover = [];
-      chapterMap.forEach((ch, url) => {
-        if (!usedUrls.has(url)) leftover.push(ch);
-      });
-      if (leftover.length) {
+      chapterMap.forEach((ch, key) => { if (!usedKeys.has(key)) leftover.push(ch); });
+      const matchedOld = existingClean.filter(ch => usedKeys.has(this._chKey(ch.url))).length;
+      const scanTrusted = scanList.length > 0 && matchedOld >= existingClean.length * 0.5;
+      if (leftover.length && !scanTrusted) {
         mergedChapters = [...leftover, ...mergedChapters];
       }
 
@@ -1095,7 +1237,10 @@ const ComicLibrary = {
       if (mergedChapters.length === 0) {
          mergedChapters = Array.from(chapterMap.values());
       }
-      
+
+      // Thứ tự mảng đổi → tìm lại vị trí đang đọc theo id chương.
+      lastReadChapter = this._remapReadIndex(existingComic.chapters, existingComic.lastReadChapter, mergedChapters);
+
       // Feature: Keep max 10 read chapters
       if (existingComic.autoDeleteOldChapters && lastReadChapter !== undefined && mergedChapters[lastReadChapter]) {
         // Find numerical values and actual index mappings
@@ -1152,6 +1297,6 @@ const ComicLibrary = {
     }
 
     await this.loadComics();
-    App.showToast(`Đã lưu "${comic.title}" vào thư viện`, 'success');
+    if (!silent) App.showToast(`Đã lưu "${comic.title}" vào thư viện`, 'success');
   },
 };

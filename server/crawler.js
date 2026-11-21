@@ -1,6 +1,7 @@
 const cheerio = require('cheerio');
 const CryptoJS = require('crypto-js');
 const axios = require('axios');
+const { filterJunkByContent } = require('./junk-filter');
 
 // Lazy-load got-scraping (ESM only) via dynamic import
 let gotScrapingPromise = null;
@@ -156,11 +157,58 @@ function preferWwwUpfront(url) {
   return null;
 }
 
+// Mirror TopTruyen còn sống. Domain nguồn đổi vài tháng một lần (zone1…zone15)
+// mà link trong DB vẫn trỏ về domain cũ đã chết → khi host TopTruyen không kết
+// nối được thì tự chuyển sang mirror. Thêm domain mới không cần sửa code: đặt
+// env TOPTRUYEN_MIRRORS (nhiều host ngăn cách bằng dấu phẩy).
+const TOPTRUYEN_MIRRORS = [
+  ...(process.env.TOPTRUYEN_MIRRORS || '').split(',').map(s => s.trim().replace(/^https?:\/\//i, '').replace(/\/.*$/, '')).filter(Boolean),
+  'www.toptruyenzone15.com',
+];
+const deadTopHosts = new Set(); // host đã xác nhận chết trong phiên này
+let liveTopMirror = null;       // mirror gần nhất tải thành công
+
+function isTopTruyenHost(host) {
+  return WWW_ONLY_HOST_RE.test(host || '');
+}
+
+function withHost(url, host) {
+  try {
+    const u = new URL(url);
+    u.hostname = host;
+    return u.toString();
+  } catch (_) {
+    return null;
+  }
+}
+
+/** Các URL mirror nên thử thay cho `url` (bỏ host hiện tại và host đã chết). */
+function mirrorAlternatives(url) {
+  let host;
+  try { host = new URL(url).hostname; } catch (_) { return []; }
+  if (!isTopTruyenHost(host)) return [];
+  const hosts = [...new Set([liveTopMirror, ...TOPTRUYEN_MIRRORS].filter(Boolean))]
+    .filter(h => h !== host && !deadTopHosts.has(h));
+  return hosts.map(h => withHost(url, h)).filter(Boolean);
+}
+
+/** Đổi domain TopTruyen đã chết sang mirror sống (dùng cho link lưu trong DB). */
+function toLiveTopTruyenUrl(url) {
+  try {
+    const host = new URL(url).hostname;
+    if (isTopTruyenHost(host) && deadTopHosts.has(host) && liveTopMirror) return withHost(url, liveTopMirror);
+  } catch (_) {}
+  return url;
+}
+
+const CONN_ERROR_CODES = ['ECONNRESET', 'ECONNREFUSED', 'ENOTFOUND', 'ETIMEDOUT', 'ECONNABORTED', 'EAI_AGAIN', 'EPROTO', 'ERR_DEAD_MIRROR'];
+
 async function fetchPage(url, retries = 5) {
   const gotScraping = await loadGotScraping();
   let lastErr;
-  let target = url;
-  let triedWww = false;
+  let target = toLiveTopTruyenUrl(url);
+  let triedWww = target !== url;
+  const mirrorQueue = mirrorAlternatives(target);
 
   const upfrontWww = preferWwwUpfront(target);
   if (upfrontWww) {
@@ -184,12 +232,23 @@ async function fetchPage(url, retries = 5) {
         },
       });
 
+      // Domain chết thường redirect về Google/trang đỗ domain thay vì lỗi.
+      let finalHost = '';
+      try { finalHost = new URL(response.url || target).hostname; } catch (_) {}
+      if (isTopTruyenHost(new URL(target).hostname) && finalHost && !isTopTruyenHost(finalHost)) {
+        const err = new Error(`Redirect ra ngoài nguồn (${finalHost})`);
+        err.code = 'ERR_DEAD_MIRROR';
+        throw err;
+      }
+
       if (response.statusCode >= 400) {
         const err = new Error(`HTTP ${response.statusCode}`);
         err.response = { status: response.statusCode };
         throw err;
       }
 
+      const okHost = new URL(target).hostname;
+      if (isTopTruyenHost(okHost) && okHost !== new URL(url).hostname) liveTopMirror = okHost;
       return response.body;
     } catch (err) {
       lastErr = err;
@@ -214,7 +273,7 @@ async function fetchPage(url, retries = 5) {
 
       // Lỗi ở tầng kết nối thường là do domain apex không phục vụ — thử bản www
       // ngay lập tức thay vì đốt hết số lần retry vào host đã chết.
-      if (!triedWww && ['ECONNRESET', 'ECONNREFUSED', 'ENOTFOUND', 'ETIMEDOUT', 'ECONNABORTED'].includes(code)) {
+      if (!triedWww && CONN_ERROR_CODES.includes(code)) {
         const wwwUrl = withWwwVariant(target);
         if (wwwUrl) {
           triedWww = true;
@@ -222,6 +281,19 @@ async function fetchPage(url, retries = 5) {
           console.log(`[FETCH] Đổi sang bản www: ${target.substring(0, 100)}`);
           continue;
         }
+      }
+
+      // Host TopTruyen không kết nối được → đánh dấu chết, chuyển sang mirror.
+      if (CONN_ERROR_CODES.includes(code) && mirrorQueue.length) {
+        try {
+          const deadHost = new URL(target).hostname;
+          deadTopHosts.add(deadHost);
+          deadTopHosts.add(deadHost.replace(/^www\./, ''));
+        } catch (_) {}
+        target = mirrorQueue.shift();
+        triedWww = true;
+        console.log(`[FETCH] Domain chết, chuyển mirror: ${target.substring(0, 100)}`);
+        continue;
       }
 
       if (i < retries - 1) {
@@ -380,19 +452,23 @@ async function getComicInfoLegacy(url) {
  * Routes to the right adapter based on URL host.
  */
 async function getChapterImages(chapterUrl) {
-  if (isTcomicUrl(chapterUrl) || /^tcomic:/.test(chapterUrl)) {
-    return getChapterImagesTcomic(chapterUrl);
-  }
-  return getChapterImagesLegacy(chapterUrl);
+  const images = (isTcomicUrl(chapterUrl) || /^tcomic:/.test(chapterUrl))
+    ? await getChapterImagesTcomic(chapterUrl)
+    : await getChapterImagesLegacy(chapterUrl);
+  // Lọc lần cuối cho mọi adapter/fallback trước khi lưu DB: theo URL trước,
+  // rồi theo nội dung ảnh cho banner quảng cáo upload riêng từng chương.
+  return filterJunkByContent(images.filter(src => !isJunkImage(src)), chapterUrl);
 }
 
 /**
  * Ảnh giao diện lẫn trong .page-chapter cần loại bỏ: logo site, banner
- * quảng bá domain (/comics/top/topzone9.jpg), nút follow (/images/default/),
- * avatar người đăng (images_user).
+ * quảng bá domain (/comics/top/topzone9.jpg, topssi.jpg), nút follow và
+ * err_image (/images/default/), avatar mặc định (/images/user.png), avatar
+ * người đăng (images_user), ảnh quảng bá lượt xem cuối chương (luotnv.jpg),
+ * emoticon bình luận trên blogspot.
  */
 function isJunkImage(src) {
-  return /logo|icon|\/ads?[\/.]|\/images\/default\/|\/comics\/top\/|images_user/i.test(src);
+  return /logo|icon|\/ads?[\/.]|\/images\/default\/|\/images\/user\.png|\/comics\/top\/|images_user|\/luotnv\.(jpe?g|png|webp)|bp\.blogspot\.com\/.*\/h120\//i.test(src);
 }
 
 async function getChapterImagesLegacy(chapterUrl) {
@@ -518,6 +594,7 @@ async function crawlLinks(comicUrl, onProgress) {
 }
 
 module.exports = {
+  toLiveTopTruyenUrl,
   getComicInfo,
   getChapterImages,
   crawlLinks,
